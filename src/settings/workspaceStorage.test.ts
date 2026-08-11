@@ -116,6 +116,35 @@ describe("WorkspaceStorage", () => {
     expect(readFileSync(storage.paths.log, "utf8")).toBe("");
   });
 
+  test("records automatic sync runtime and logs without rewriting configuration", async () => {
+    const { storage } = createStorage();
+    const initial = normalizeSettings({ ...DEFAULT_SETTINGS, cliCommand: "/configured/dida" });
+    await storage.saveConfiguration(initial);
+    const duringSync = normalizeSettings({
+      ...initial,
+      cliCommand: "/must-not-replace-config/dida",
+      resolvedCliPaths: { "darwin:desk": "/resolved/dida" },
+      ranges: [
+        {
+          id: "range-1",
+          name: "Work",
+          notebookId: "box-1",
+          hpathPrefix: "/Work",
+          includeChildren: true,
+          targetProjectId: "project-1",
+          targetProjectName: "Dida Work",
+          cursorOffset: 12
+        }
+      ]
+    });
+
+    const logs = await storage.recordSync(duringSync, result(4));
+
+    expect(JSON.parse(readFileSync(storage.paths.configuration, "utf8")).cliCommand).toBe("/configured/dida");
+    expect(JSON.parse(readFileSync(storage.paths.runtime, "utf8")).rangeCursorOffsets).toEqual({ "range-1": 12 });
+    expect(logs).toEqual([result(4)]);
+  });
+
   test("migrates legacy settings before removing the legacy file", async () => {
     const { storage } = createStorage();
     const legacy = normalizeSettings({

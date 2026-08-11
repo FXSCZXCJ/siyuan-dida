@@ -83,6 +83,11 @@ export class WorkspaceStorage {
     return logs;
   }
 
+  async recordSync(settings: PluginSettings, result: SyncResult): Promise<SyncResult[]> {
+    await this.saveRuntime(settings);
+    return this.appendLog(result);
+  }
+
   async loadLogs(): Promise<SyncResult[]> {
     let content: string;
     try {

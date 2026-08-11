@@ -7,12 +7,13 @@ import { DEFAULT_SETTINGS, normalizeSettings, type PluginSettings } from "./sett
 import { getResolvedCliPathForCurrentDevice, withResolvedCliPathForCurrentDevice } from "./settings/deviceCli";
 import { summarizeSyncLog } from "./settings/logFormat";
 import { buildSettingsPanel } from "./settings/settingsPanel";
+import { WorkspaceStorage } from "./settings/workspaceStorage";
 import { SiYuanRepository } from "./siyuan/repository";
 import { setSyncTooltip } from "./syncTooltip";
 import type { SyncResult } from "./core/types";
 import { createTranslator, type Translate } from "./i18n";
 
-const STORAGE_NAME = "settings.json";
+const LEGACY_STORAGE_NAME = "settings.json";
 
 export default class SiyuanDidaPlugin extends Plugin {
   private settings!: PluginSettings;
@@ -20,10 +21,22 @@ export default class SiyuanDidaPlugin extends Plugin {
   private syncRunning = false;
   private syncButton!: HTMLElement;
   private t!: Translate;
+  private storage!: WorkspaceStorage;
 
   async onload() {
-    this.t = createTranslator(window.siyuan.config?.lang ?? navigator.language);
-    this.settings = normalizeSettings(await this.loadData(STORAGE_NAME));
+    const config = window.siyuan.config;
+    if (!config) {
+      throw new Error("SiYuan configuration is unavailable");
+    }
+    this.t = createTranslator(config.lang ?? navigator.language);
+    this.storage = new WorkspaceStorage(
+      config.system.confDir,
+      config.system.workspaceDir
+    );
+    this.settings = await this.storage.initialize(
+      () => this.loadData(LEGACY_STORAGE_NAME),
+      () => this.removeData(LEGACY_STORAGE_NAME)
+    );
     this.syncButton = this.addTopBar({
       icon: "iconRefresh",
       title: this.t("syncDida"),
@@ -71,6 +84,10 @@ export default class SiyuanDidaPlugin extends Plugin {
             this.settings = normalizeSettings(settings);
             await this.saveSettings();
             this.resetTimer();
+          },
+          onClearLogs: async () => {
+            await this.storage.clearLogs();
+            this.settings.logs = [];
           }
         })
       );
@@ -78,7 +95,8 @@ export default class SiyuanDidaPlugin extends Plugin {
   }
 
   private async saveSettings() {
-    await this.saveData(STORAGE_NAME, this.settings);
+    await this.storage.saveConfiguration(this.settings);
+    await this.storage.saveRuntime(this.settings);
   }
 
   private resetTimer() {
@@ -123,16 +141,14 @@ export default class SiyuanDidaPlugin extends Plugin {
         ...range,
         cursorOffset: result.rangeCursorOffsets[range.id] ?? range.cursorOffset ?? 0
       }));
-      this.settings.logs = [result, ...this.settings.logs].slice(0, 20);
-      await this.saveSettings();
+      this.settings.logs = await this.storage.recordSync(this.settings, result);
       this.updateStatus(result.failed > 0 ? this.t("statusFailed", { time: new Date().toLocaleTimeString() }) : this.t("statusSynced", { time: new Date().toLocaleTimeString() }));
       if (!options.silentSkip) {
         showMessage(this.t("syncComplete", { summary: summarizeSyncLog(result) }));
       }
     } catch (error) {
       const result = createErrorSyncResult((error as Error).message);
-      this.settings.logs = [result, ...this.settings.logs].slice(0, 20);
-      await this.saveSettings();
+      this.settings.logs = await this.storage.recordSync(this.settings, result);
       this.updateStatus(this.t("statusFailed", { time: new Date().toLocaleTimeString() }));
       if (!options.silentSkip) {
         showMessage(this.t("syncFailed", { message: (error as Error).message }), 7000, "error");

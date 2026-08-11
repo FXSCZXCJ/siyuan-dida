@@ -12,6 +12,7 @@ export interface SettingsPanelOptions {
   settings: PluginSettings;
   t: Translate;
   onSave(settings: PluginSettings): Promise<void>;
+  onClearLogs(): Promise<void>;
 }
 
 export function buildSettingsPanel(options: SettingsPanelOptions): HTMLElement {
@@ -187,9 +188,9 @@ export function buildSettingsPanel(options: SettingsPanelOptions): HTMLElement {
 
   root.querySelector('[data-action="clearLogs"]')?.addEventListener("click", async () => {
     try {
+      await options.onClearLogs();
       options.settings.logs = [];
       logs.textContent = formatSyncLogs([]);
-      await options.onSave(options.settings);
       showMessage(t("logsCleared"));
     } catch (error) {
       showMessage(t("logsClearFailed", { message: (error as Error).message }), 5000, "error");
