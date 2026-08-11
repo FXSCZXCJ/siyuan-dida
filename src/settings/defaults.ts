@@ -13,6 +13,24 @@ export interface PluginSettings {
   logs: SyncResult[];
 }
 
+export type StoredSyncRange = Omit<SyncRange, "cursorOffset">;
+
+export interface StoredPluginSettings {
+  cliCommand: string;
+  autoSync: boolean;
+  newTaskDate: NewTaskDate;
+  syncIntervalSeconds: number;
+  syncOnStartup: boolean;
+  maxTasksPerRun: number;
+  ranges: StoredSyncRange[];
+}
+
+export interface PluginRuntimeState {
+  resolvedCliPath: string;
+  resolvedCliPaths: Record<string, string>;
+  rangeCursorOffsets: Record<string, number>;
+}
+
 export const DEFAULT_SETTINGS: PluginSettings = {
   cliCommand: "dida",
   resolvedCliPath: "",
@@ -47,4 +65,48 @@ export function settingsForSave(current: PluginSettings, updates: Partial<Plugin
     next.resolvedCliPaths = {};
   }
   return next;
+}
+
+export function splitSettingsForStorage(settings: PluginSettings): {
+  configuration: StoredPluginSettings;
+  runtime: PluginRuntimeState;
+} {
+  return {
+    configuration: {
+      cliCommand: settings.cliCommand,
+      autoSync: settings.autoSync,
+      newTaskDate: settings.newTaskDate,
+      syncIntervalSeconds: settings.syncIntervalSeconds,
+      syncOnStartup: settings.syncOnStartup,
+      maxTasksPerRun: settings.maxTasksPerRun,
+      ranges: settings.ranges.map(({ cursorOffset: _cursorOffset, ...range }) => range)
+    },
+    runtime: {
+      resolvedCliPath: settings.resolvedCliPath,
+      resolvedCliPaths: { ...settings.resolvedCliPaths },
+      rangeCursorOffsets: Object.fromEntries(
+        settings.ranges
+          .filter((range) => typeof range.cursorOffset === "number")
+          .map((range) => [range.id, range.cursorOffset as number])
+      )
+    }
+  };
+}
+
+export function mergeStoredSettings(
+  configuration: Partial<StoredPluginSettings> | null | undefined,
+  runtime: Partial<PluginRuntimeState> | null | undefined,
+  logs: SyncResult[] = []
+): PluginSettings {
+  const ranges = (configuration?.ranges ?? []).map((range) => ({
+    ...range,
+    cursorOffset: runtime?.rangeCursorOffsets?.[range.id] ?? 0
+  }));
+  return normalizeSettings({
+    ...configuration,
+    resolvedCliPath: runtime?.resolvedCliPath ?? "",
+    resolvedCliPaths: runtime?.resolvedCliPaths ?? {},
+    ranges,
+    logs
+  });
 }
