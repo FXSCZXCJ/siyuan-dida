@@ -42,6 +42,10 @@ Repeat these steps on every computer that uses the plugin. The plugin stores res
 
 Enable **Automatic sync** in plugin settings and select an interval of at least five seconds. Only one sync runs at a time; an overlapping trigger is skipped. The sync log records created, updated, completed, skipped, and failed items.
 
+## Data storage
+
+Stable plugin settings are stored under the workspace `conf/siyuan-dida/` directory. Sync logs and rotating cursor state are stored under `temp/siyuan-dida/`, outside SiYuan note data and data history. Logs retain the latest 20 runs. Version 1.1.12 automatically migrates the former `data/storage/petal/siyuan-dida/settings.json` file and removes it after the new files are written successfully.
+
 ## Troubleshooting
 
 - **Dida CLI is unavailable:** run `dida --version` in a terminal first. If it works there but not in SiYuan, enter the absolute executable path in settings and test again.
