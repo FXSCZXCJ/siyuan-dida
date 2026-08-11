@@ -14,6 +14,7 @@
 
 **Files:**
 - Modify: `src/core/date.test.ts`
+- Modify: `src/core/syncEngine.test.ts`
 - Modify: `src/dida/cli.test.ts`
 - Modify: `src/core/date.ts`
 
@@ -29,11 +30,13 @@ test("formats local midnight with a numeric timezone offset", () => {
 
 Update the date sample in `src/dida/cli.test.ts` so the CLI contract test passes and expects `2026-07-02T00:00:00+0800` rather than a date-only string.
 
+Update every dated-task expectation in `src/core/syncEngine.test.ts` to require `T00:00:00` and a numeric timezone offset. Keep the undated-task expectation unchanged.
+
 **Step 2: Run the focused tests and verify the regression test fails**
 
-Run: `npm test -- src/core/date.test.ts src/dida/cli.test.ts`
+Run: `npm test -- src/core/date.test.ts src/core/syncEngine.test.ts src/dida/cli.test.ts`
 
-Expected: `src/core/date.test.ts` fails because the current result is `2026-07-02`; the CLI adapter test passes because it forwards the supplied value unchanged.
+Expected: the dated-task assertions fail because the current formatter returns a date-only value; the CLI adapter test passes because it forwards the supplied value unchanged.
 
 **Step 3: Implement the minimal formatter fix**
 
@@ -58,14 +61,14 @@ Keep the existing `pad2` helper unchanged.
 
 **Step 4: Run the focused tests and verify they pass**
 
-Run: `npm test -- src/core/date.test.ts src/dida/cli.test.ts`
+Run: `npm test -- src/core/date.test.ts src/core/syncEngine.test.ts src/dida/cli.test.ts`
 
 Expected: both test files pass with no errors or warnings.
 
 **Step 5: Commit the regression fix**
 
 ```bash
-git add src/core/date.ts src/core/date.test.ts src/dida/cli.test.ts
+git add src/core/date.ts src/core/date.test.ts src/core/syncEngine.test.ts src/dida/cli.test.ts
 git commit -m "fix: preserve date on new Dida tasks"
 ```
 
