@@ -628,8 +628,9 @@ describe("SyncEngine", () => {
   });
 
   test("recovers an already completed marked Dida task for a checked SiYuan todo without completing it again", async () => {
+    const validBlockId = "20260812213000-abcdefg";
     const siyuan = new FakeSiYuan([
-      block({ markdown: "- [x] 整理会议纪要" })
+      block({ id: validBlockId, markdown: "- [x] 整理会议纪要" })
     ]);
     const dida = new FakeDida();
     dida.completedTaskSnapshots = [
@@ -637,6 +638,12 @@ describe("SyncEngine", () => {
         id: "completed-task",
         projectId: "project-1",
         title: "整理会议纪要",
+        content: `来源：思源笔记\nSiYuan-Block-ID: ${validBlockId}`
+      },
+      {
+        id: "invalid-marker-task",
+        projectId: "project-1",
+        title: "无效标识任务",
         content: "来源：思源笔记\nSiYuan-Block-ID: block-1"
       }
     ];
@@ -644,7 +651,7 @@ describe("SyncEngine", () => {
     const result = await new SyncEngine(siyuan, dida).sync(settings());
 
     expect(result).toMatchObject({ recovered: 1, completed: 0, failed: 0 });
-    expect(siyuan.listCalls[0].recoveryBlockIds).toEqual(["block-1"]);
+    expect(siyuan.listCalls[0].recoveryBlockIds).toEqual([validBlockId]);
     expect(dida.completed).toEqual([]);
     expect(siyuan.attrs[0].attrs).toMatchObject({
       "custom-dida-task-id": "completed-task",

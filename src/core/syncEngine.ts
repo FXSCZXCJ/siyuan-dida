@@ -1,7 +1,7 @@
 import { localAllDayStart } from "./date";
 import { createTranslator, type Translate } from "../i18n";
 import { taskHash } from "./hash";
-import { buildTaskSourceContent, parseSourceBlockId } from "./sourceMarker";
+import { buildTaskSourceContent, isSiYuanBlockId, parseSourceBlockId } from "./sourceMarker";
 import { parseTodoMarkdown } from "./todoParser";
 import type {
   DidaGateway,
@@ -144,7 +144,9 @@ export class SyncEngine {
       addEvent(result, "warn", this.t("completedTasksLoadFailed", { message: (error as Error).message }));
     }
 
-    const recoveryBlockIds = new Set(recoveryContext.tasksBySourceBlockId.keys());
+    const recoveryBlockIds = new Set(
+      [...recoveryContext.tasksBySourceBlockId.keys()].filter(isSiYuanBlockId)
+    );
     for (const range of settings.ranges) {
       let cursorOffset = normalizeOffset(range.cursorOffset);
       const page = await this.listRangePage(
