@@ -16,8 +16,13 @@ interface KramdownBlock {
 }
 
 export class SiYuanRepository implements SiYuanGateway {
-  async listTodoBlocks(range: SyncRange, limit: number, offset = 0): Promise<SiYuanTodoBlock[]> {
-    const sql = buildTodoBlockSql(range, limit, offset);
+  async listTodoBlocks(
+    range: SyncRange,
+    limit: number,
+    offset = 0,
+    recoveryBlockIds: ReadonlySet<string> = new Set()
+  ): Promise<SiYuanTodoBlock[]> {
+    const sql = buildTodoBlockSql(range, limit, offset, recoveryBlockIds);
     const rows = (await kernelApi<SqlBlockRow[] | null>("/api/query/sql", { stmt: sql })) ?? [];
     const blocks = await Promise.all(
       rows.map(async (row) => ({
@@ -61,7 +66,12 @@ export class SiYuanRepository implements SiYuanGateway {
   }
 }
 
-export function buildTodoBlockSql(range: SyncRange, limit: number, offset = 0): string {
+export function buildTodoBlockSql(
+  range: SyncRange,
+  limit: number,
+  offset = 0,
+  recoveryBlockIds: ReadonlySet<string> = new Set()
+): string {
   const hpathClause = range.includeChildren
     ? `(b.hpath = '${escapeSql(range.hpathPrefix)}' OR instr(b.hpath, '${escapeSql(range.hpathPrefix)}/') = 1)`
     : `b.hpath = '${escapeSql(range.hpathPrefix)}'`;
@@ -82,6 +92,14 @@ export function buildTodoBlockSql(range: SyncRange, limit: number, offset = 0): 
         OR b.markdown LIKE '* {: %}[X] %'
       )`;
   const archivedCompletedClause = `b.ial NOT LIKE '%custom-dida-sync-state="completed-synced"%'`;
+  const recoveryIds = [...recoveryBlockIds].filter(Boolean);
+  const recoverableCompletedClause = recoveryIds.length > 0
+    ? `
+          OR (
+            COALESCE(b.ial, '') NOT LIKE '%custom-dida-task-id%'
+            AND b.id IN (${recoveryIds.map((id) => `'${escapeSql(id)}'`).join(", ")})
+          )`
+    : "";
 
   return `
     SELECT
@@ -103,7 +121,12 @@ export function buildTodoBlockSql(range: SyncRange, limit: number, offset = 0): 
       AND b.subtype = 't'
       AND (
         ${incompleteClause}
-        OR (${completedClause} AND b.ial LIKE '%custom-dida-task-id%' AND ${archivedCompletedClause})
+        OR (
+          ${completedClause}
+          AND (
+            (b.ial LIKE '%custom-dida-task-id%' AND ${archivedCompletedClause})${recoverableCompletedClause}
+          )
+        )
       )
     ORDER BY
       CASE

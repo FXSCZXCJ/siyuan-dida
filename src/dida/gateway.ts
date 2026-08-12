@@ -8,6 +8,10 @@ export class DidaCliGateway implements DidaGateway {
     return this.client.listIncompleteTasks(projectIds);
   }
 
+  listCompletedTasks(projectIds: string[]): Promise<DidaTaskSnapshot[]> {
+    return this.client.listCompletedTasks(projectIds);
+  }
+
   createTask(projectId: string, title: string, options?: CreateDidaTaskOptions) {
     return this.client.createTask(projectId, title, options);
   }
@@ -22,10 +26,5 @@ export class DidaCliGateway implements DidaGateway {
 
   completeTask(projectId: string, taskId: string) {
     return this.client.completeTask(projectId, taskId);
-  }
-
-  async listCompletedTaskIds(projectIds: string[]): Promise<Set<string>> {
-    const tasks = await this.client.listCompletedTasks(projectIds);
-    return new Set(tasks.map((task) => task.id));
   }
 }

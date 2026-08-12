@@ -34,6 +34,28 @@ describe("buildTodoBlockSql", () => {
     expect(sql).toContain("b.markdown LIKE '- {: %}[x] %'");
     expect(sql).toContain("b.markdown LIKE '- {: %}[X] %'");
     expect(sql).toContain("LIMIT 200 OFFSET 400");
+    expect(sql).not.toContain("b.id IN (");
+  });
+
+  test("includes only explicitly recoverable unbound completed todo IDs", () => {
+    const sql = buildTodoBlockSql(
+      {
+        id: "range-1",
+        name: "工作日志",
+        notebookId: "box-1",
+        hpathPrefix: "/工作",
+        includeChildren: true,
+        targetProjectId: "project-1",
+        targetProjectName: "工作"
+      },
+      200,
+      0,
+      new Set(["recover-block", "quote'block"])
+    );
+
+    expect(sql).toContain("COALESCE(b.ial, '') NOT LIKE '%custom-dida-task-id%'");
+    expect(sql).toContain("b.id IN ('recover-block', 'quote''block')");
+    expect(sql).not.toContain("b.id IN ('historical-block')");
   });
 
   test("matches only the selected document and its descendants when children are included", () => {
@@ -75,6 +97,31 @@ describe("buildTodoBlockSql", () => {
 });
 
 describe("SiYuanRepository", () => {
+  test("passes recovery block IDs into the todo SQL query", async () => {
+    let stmt = "";
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (_path, init) => {
+      stmt = (JSON.parse(String(init?.body)) as { stmt: string }).stmt;
+      return new Response(JSON.stringify({ code: 0, data: null }), { status: 200 });
+    });
+
+    await new SiYuanRepository().listTodoBlocks(
+      {
+        id: "range-1",
+        name: "工作",
+        notebookId: "box-1",
+        hpathPrefix: "/工作",
+        includeChildren: true,
+        targetProjectId: "project-1",
+        targetProjectName: "工作"
+      },
+      200,
+      0,
+      new Set(["recovery-block"])
+    );
+
+    expect(stmt).toContain("b.id IN ('recovery-block')");
+  });
+
   test("treats a null SQL query result as an empty todo list", async () => {
     vi.spyOn(globalThis, "fetch").mockImplementation(async () => {
       return new Response(JSON.stringify({ code: 0, data: null }), { status: 200 });

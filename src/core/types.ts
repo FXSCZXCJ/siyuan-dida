@@ -72,7 +72,12 @@ export interface SyncEvent {
 }
 
 export interface SiYuanGateway {
-  listTodoBlocks(range: SyncRange, limit: number, offset?: number): Promise<SiYuanTodoBlock[]>;
+  listTodoBlocks(
+    range: SyncRange,
+    limit: number,
+    offset?: number,
+    recoveryBlockIds?: ReadonlySet<string>
+  ): Promise<SiYuanTodoBlock[]>;
   getBlockAttrs(blockId: string): Promise<Record<string, string>>;
   setBlockAttrs(blockId: string, attrs: Record<string, string>): Promise<void>;
   markBlockCompleted(blockId: string): Promise<void>;
@@ -93,9 +98,9 @@ export interface DidaTaskSnapshot {
 
 export interface DidaGateway {
   listIncompleteTasks(projectIds: string[]): Promise<DidaTaskSnapshot[]>;
+  listCompletedTasks(projectIds: string[]): Promise<DidaTaskSnapshot[]>;
   createTask(projectId: string, title: string, options?: CreateDidaTaskOptions): Promise<{ id: string; projectId: string }>;
   updateTaskTitle(projectId: string, taskId: string, title: string): Promise<void>;
   setTaskParent(projectId: string, taskId: string, parentTaskId: string): Promise<void>;
   completeTask(projectId: string, taskId: string): Promise<void>;
-  listCompletedTaskIds(projectIds: string[]): Promise<Set<string>>;
 }

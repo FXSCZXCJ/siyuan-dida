@@ -300,4 +300,37 @@ describe("DidaCliGateway", () => {
       { id: "task-1", projectId: "project-1", title: "Task", content: "Source" }
     ]);
   });
+
+  test("delegates completed task snapshots to the CLI client", async () => {
+    const client = new DidaCliClient("dida", async (_command, args) => {
+      expect(args).toEqual([
+        "task",
+        "completed",
+        "--json",
+        "--projects",
+        "project-1"
+      ]);
+      return {
+        stdout: JSON.stringify([
+          {
+            id: "task-1",
+            projectId: "project-1",
+            title: "Task",
+            content: "Source\nSiYuan-Block-ID: block-1"
+          }
+        ]),
+        stderr: ""
+      };
+    });
+    const gateway = new DidaCliGateway(client);
+
+    await expect(gateway.listCompletedTasks(["project-1"])).resolves.toEqual([
+      {
+        id: "task-1",
+        projectId: "project-1",
+        title: "Task",
+        content: "Source\nSiYuan-Block-ID: block-1"
+      }
+    ]);
+  });
 });
