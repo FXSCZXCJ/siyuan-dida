@@ -28,6 +28,8 @@ export interface SiYuanTodoBlock {
 
 export interface SyncResult {
   created: number;
+  /** Optional so sync logs persisted before recovery support remain readable. */
+  recovered?: number;
   updated: number;
   completed: number;
   writtenBack: number;
@@ -49,6 +51,8 @@ export interface SyncRangeResult {
   hpathPrefix: string;
   scanned: number;
   created: number;
+  /** Optional so sync logs persisted before recovery support remain readable. */
+  recovered?: number;
   updated: number;
   completed: number;
   writtenBack: number;

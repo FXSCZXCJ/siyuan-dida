@@ -1,7 +1,16 @@
 import { describe, expect, test } from "vitest";
+import { createTranslator } from "../i18n";
 import { taskHash } from "./hash";
 import { SyncEngine } from "./syncEngine";
-import type { CreateDidaTaskOptions, DidaGateway, SiYuanGateway, SyncRange, SyncSettings, SiYuanTodoBlock } from "./types";
+import type {
+  CreateDidaTaskOptions,
+  DidaGateway,
+  DidaTaskSnapshot,
+  SiYuanGateway,
+  SyncRange,
+  SyncSettings,
+  SiYuanTodoBlock
+} from "./types";
 
 function settings(): SyncSettings {
   return {
@@ -63,16 +72,36 @@ class FakeDida implements DidaGateway {
   public completed: Array<{ projectId: string; taskId: string }> = [];
   public updated: Array<{ projectId: string; taskId: string; title: string }> = [];
   public parents: Array<{ projectId: string; taskId: string; parentTaskId: string }> = [];
+  public incompleteTasks: DidaTaskSnapshot[] = [];
+  public incompleteTaskCalls: string[][] = [];
+  public completedTaskCalls: string[][] = [];
+  public incompleteTaskError: Error | null = null;
   public completedTasks = new Set<string>();
   public completedTaskError: Error | null = null;
+  public createTaskError: Error | null = null;
+  public createSideEffect: ((task: DidaTaskSnapshot) => void) | null = null;
 
-  async listIncompleteTasks() {
-    return [];
+  async listIncompleteTasks(projectIds: string[]) {
+    this.incompleteTaskCalls.push([...projectIds]);
+    if (this.incompleteTaskError) {
+      throw this.incompleteTaskError;
+    }
+    return [...this.incompleteTasks];
   }
 
   async createTask(projectId: string, title: string, options?: CreateDidaTaskOptions) {
     this.created.push({ projectId, title, options });
-    return { id: `task-${this.created.length}`, projectId };
+    const task = {
+      id: `task-${this.created.length}`,
+      projectId,
+      title,
+      content: options?.content
+    };
+    this.createSideEffect?.(task);
+    if (this.createTaskError) {
+      throw this.createTaskError;
+    }
+    return task;
   }
 
   async updateTaskTitle(projectId: string, taskId: string, title: string) {
@@ -87,7 +116,8 @@ class FakeDida implements DidaGateway {
     this.completed.push({ projectId, taskId });
   }
 
-  async listCompletedTaskIds() {
+  async listCompletedTaskIds(projectIds: string[]) {
+    this.completedTaskCalls.push([...projectIds]);
     if (this.completedTaskError) {
       throw this.completedTaskError;
     }
@@ -103,15 +133,16 @@ describe("SyncEngine", () => {
     const result = await new SyncEngine(siyuan, dida).sync(settings());
 
     expect(result.created).toBe(1);
+    expect(result.recovered).toBe(0);
     expect(result.scanned).toBe(1);
-    expect(result.rangeResults[0]).toMatchObject({ rangeName: "工作", scanned: 1 });
+    expect(result.rangeResults[0]).toMatchObject({ rangeName: "工作", scanned: 1, recovered: 0 });
     expect(result.events.some((event) => event.message.includes("创建滴答任务"))).toBe(true);
     expect(dida.created).toEqual([
       {
         projectId: "project-1",
         title: "整理会议纪要",
         options: {
-          content: "来源：思源笔记",
+          content: "来源：思源笔记\nSiYuan-Block-ID: block-1",
           allDay: true,
           startDate: expect.stringMatching(/^\d{4}-\d{2}-\d{2}T00:00:00[+-]\d{4}$/)
         }
@@ -134,7 +165,7 @@ describe("SyncEngine", () => {
         projectId: "project-1",
         title: "整理会议纪要",
         options: {
-          content: "来源：思源笔记"
+          content: "来源：思源笔记\nSiYuan-Block-ID: block-1"
         }
       }
     ]);
@@ -155,7 +186,7 @@ describe("SyncEngine", () => {
         projectId: "project-1",
         title: "父任务",
         options: {
-          content: "来源：思源笔记",
+          content: "来源：思源笔记\nSiYuan-Block-ID: parent-block",
           allDay: true,
           startDate: expect.stringMatching(/^\d{4}-\d{2}-\d{2}T00:00:00[+-]\d{4}$/)
         }
@@ -164,7 +195,7 @@ describe("SyncEngine", () => {
         projectId: "project-1",
         title: "子任务",
         options: {
-          content: "来源：思源笔记",
+          content: "来源：思源笔记\nSiYuan-Block-ID: child-block",
           allDay: true,
           startDate: expect.stringMatching(/^\d{4}-\d{2}-\d{2}T00:00:00[+-]\d{4}$/)
         }
@@ -190,7 +221,7 @@ describe("SyncEngine", () => {
         projectId: "project-1",
         title: "子任务",
         options: {
-          content: "来源：思源笔记",
+          content: "来源：思源笔记\nSiYuan-Block-ID: child-block",
           allDay: true,
           startDate: expect.stringMatching(/^\d{4}-\d{2}-\d{2}T00:00:00[+-]\d{4}$/)
         }
@@ -290,12 +321,13 @@ describe("SyncEngine", () => {
     expect(result.created).toBe(1);
     expect(result.failed).toBe(1);
     expect(result.failures[0].message).toContain("滴答已完成任务读取失败");
+    expect(dida.incompleteTaskCalls).toEqual([["project-1"]]);
     expect(dida.created).toEqual([
       {
         projectId: "project-1",
         title: "整理会议纪要",
         options: {
-          content: "来源：思源笔记",
+          content: "来源：思源笔记\nSiYuan-Block-ID: block-1",
           allDay: true,
           startDate: expect.stringMatching(/^\d{4}-\d{2}-\d{2}T00:00:00[+-]\d{4}$/)
         }
@@ -421,5 +453,180 @@ describe("SyncEngine", () => {
     expect(result.skipped).toBe(1);
     expect(dida.completed).toEqual([]);
     expect(siyuan.attrs).toEqual([]);
+  });
+
+  test("includes the matching SiYuan source marker in every newly created Dida task", async () => {
+    const siyuan = new FakeSiYuan([
+      block({ id: "block-a", markdown: "- [ ] 任务 A" }),
+      block({ id: "block-b", markdown: "- [ ] 任务 B" })
+    ]);
+    const dida = new FakeDida();
+
+    await new SyncEngine(siyuan, dida).sync(settings());
+
+    expect(dida.created.map((item) => item.options?.content)).toEqual([
+      "来源：思源笔记\nSiYuan-Block-ID: block-a",
+      "来源：思源笔记\nSiYuan-Block-ID: block-b"
+    ]);
+  });
+
+  test("restores a unique marked Dida task binding without creating a duplicate", async () => {
+    const siyuan = new FakeSiYuan([block({})]);
+    const dida = new FakeDida();
+    dida.incompleteTasks = [
+      {
+        id: "existing-task",
+        projectId: "project-1",
+        title: "整理会议纪要",
+        content: "来源：思源笔记\nSiYuan-Block-ID: block-1"
+      }
+    ];
+
+    const result = await new SyncEngine(siyuan, dida).sync(settings());
+
+    expect(result).toMatchObject({ created: 0, recovered: 1 });
+    expect(result.rangeResults[0]).toMatchObject({ created: 0, recovered: 1 });
+    expect(dida.created).toEqual([]);
+    expect(siyuan.attrs[0]).toMatchObject({
+      blockId: "block-1",
+      attrs: {
+        "custom-dida-task-id": "existing-task",
+        "custom-dida-project-id": "project-1",
+        "custom-dida-last-hash": taskHash("整理会议纪要", false),
+        "custom-dida-sync-state": "synced"
+      }
+    });
+    expect(result.events.some((event) => event.message.includes("读取滴答未完成任务 1 个"))).toBe(true);
+    expect(result.events.some((event) => event.message.includes("恢复滴答任务绑定"))).toBe(true);
+  });
+
+  test("recovers on the next sync after Dida creates a task but its response is lost", async () => {
+    const siyuan = new FakeSiYuan([block({})]);
+    const dida = new FakeDida();
+    dida.createSideEffect = (task) => dida.incompleteTasks.push(task);
+    dida.createTaskError = new Error("lost CLI response");
+
+    const first = await new SyncEngine(siyuan, dida).sync(settings());
+
+    expect(first).toMatchObject({ created: 0, recovered: 0, failed: 1 });
+    expect(dida.created).toHaveLength(1);
+    expect(siyuan.attrs).toEqual([]);
+
+    dida.createSideEffect = null;
+    dida.createTaskError = null;
+    const second = await new SyncEngine(siyuan, dida).sync(settings());
+
+    expect(second).toMatchObject({ created: 0, recovered: 1, failed: 0 });
+    expect(dida.created).toHaveLength(1);
+    expect(siyuan.attrs.at(-1)?.attrs["custom-dida-task-id"]).toBe("task-1");
+  });
+
+  test("recovers marked parent and child tasks parent-first and restores their relationship", async () => {
+    const siyuan = new FakeSiYuan([
+      block({ id: "child-block", parentId: "parent-block", markdown: "- [ ] 子任务" }),
+      block({ id: "parent-block", markdown: "- [ ] 父任务" })
+    ]);
+    const dida = new FakeDida();
+    dida.incompleteTasks = [
+      {
+        id: "child-task",
+        projectId: "project-1",
+        title: "子任务",
+        content: "来源：思源笔记\nSiYuan-Block-ID: child-block"
+      },
+      {
+        id: "parent-task",
+        projectId: "project-1",
+        title: "父任务",
+        content: "来源：思源笔记\nSiYuan-Block-ID: parent-block"
+      }
+    ];
+
+    const result = await new SyncEngine(siyuan, dida).sync(settings());
+
+    expect(result).toMatchObject({ created: 0, recovered: 2, failed: 0 });
+    expect(siyuan.attrs.map((item) => item.blockId)).toEqual(["parent-block", "child-block"]);
+    expect(dida.parents).toEqual([
+      { projectId: "project-1", taskId: "child-task", parentTaskId: "parent-task" }
+    ]);
+  });
+
+  test("fails safely when multiple Dida tasks share one source marker", async () => {
+    const siyuan = new FakeSiYuan([block({})]);
+    const dida = new FakeDida();
+    dida.incompleteTasks = [
+      {
+        id: "duplicate-1",
+        projectId: "project-1",
+        content: "来源：思源笔记\nSiYuan-Block-ID: block-1"
+      },
+      {
+        id: "duplicate-2",
+        projectId: "project-1",
+        content: "Source: SiYuan Notes\nSiYuan-Block-ID: block-1"
+      }
+    ];
+
+    const result = await new SyncEngine(siyuan, dida).sync(settings());
+
+    expect(result).toMatchObject({ created: 0, recovered: 0, failed: 1 });
+    expect(dida.created).toEqual([]);
+    expect(siyuan.attrs).toEqual([]);
+    expect(result.failures[0]).toMatchObject({ blockId: "block-1" });
+    expect(result.failures[0].message).toContain("多个滴答任务使用同一思源来源标识");
+  });
+
+  test("blocks all unbound creation after an incomplete snapshot failure but still updates bound titles", async () => {
+    const siyuan = new FakeSiYuan([
+      block({ id: "new-block", markdown: "- [ ] 新任务" }),
+      block({
+        id: "bound-block",
+        markdown: "- [ ] 已绑定任务的新标题",
+        attrs: {
+          "custom-dida-task-id": "bound-task",
+          "custom-dida-project-id": "project-1",
+          "custom-dida-last-hash": taskHash("已绑定任务", false)
+        }
+      })
+    ]);
+    const dida = new FakeDida();
+    dida.incompleteTaskError = new Error("network offline");
+
+    const result = await new SyncEngine(siyuan, dida, createTranslator("en")).sync(settings());
+
+    expect(result).toMatchObject({ created: 0, recovered: 0, updated: 1, failed: 2 });
+    expect(dida.created).toEqual([]);
+    expect(dida.updated).toEqual([
+      { projectId: "project-1", taskId: "bound-task", title: "已绑定任务的新标题" }
+    ]);
+    expect(result.failures.map((failure) => failure.message)).toEqual([
+      expect.stringContaining("Failed to load incomplete Dida tasks"),
+      expect.stringContaining("Blocked creating Dida task")
+    ]);
+  });
+
+  test("loads incomplete and completed snapshots once with unique configured project IDs", async () => {
+    const testSettings = settings();
+    testSettings.ranges.push(
+      {
+        ...testSettings.ranges[0],
+        id: "range-2",
+        name: "工作副本"
+      },
+      {
+        ...testSettings.ranges[0],
+        id: "range-3",
+        name: "个人",
+        targetProjectId: "project-2",
+        targetProjectName: "个人"
+      }
+    );
+    const siyuan = new FakeSiYuan([]);
+    const dida = new FakeDida();
+
+    await new SyncEngine(siyuan, dida).sync(testSettings);
+
+    expect(dida.incompleteTaskCalls).toEqual([["project-1", "project-2"]]);
+    expect(dida.completedTaskCalls).toEqual([["project-1", "project-2"]]);
   });
 });

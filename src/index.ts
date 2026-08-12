@@ -170,6 +170,7 @@ function createErrorSyncResult(message: string): SyncResult {
   const now = new Date().toISOString();
   return {
     created: 0,
+    recovered: 0,
     updated: 0,
     completed: 0,
     writtenBack: 0,

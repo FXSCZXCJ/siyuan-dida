@@ -1,8 +1,19 @@
 import { localAllDayStart } from "./date";
 import { createTranslator, type Translate } from "../i18n";
 import { taskHash } from "./hash";
+import { buildTaskSourceContent, parseSourceBlockId } from "./sourceMarker";
 import { parseTodoMarkdown } from "./todoParser";
-import type { DidaGateway, SiYuanGateway, SyncEvent, SyncRange, SyncRangeResult, SyncResult, SyncSettings, SiYuanTodoBlock } from "./types";
+import type {
+  DidaGateway,
+  DidaTaskSnapshot,
+  SiYuanGateway,
+  SyncEvent,
+  SyncRange,
+  SyncRangeResult,
+  SyncResult,
+  SyncSettings,
+  SiYuanTodoBlock
+} from "./types";
 
 const TASK_ID_ATTR = "custom-dida-task-id";
 const PROJECT_ID_ATTR = "custom-dida-project-id";
@@ -22,10 +33,16 @@ interface RangeSyncContext {
   knownBindings: Map<string, TaskBinding>;
 }
 
+interface RecoveryContext {
+  tasksBySourceBlockId: Map<string, DidaTaskSnapshot[]>;
+  creationSafe: boolean;
+}
+
 function emptyResult(): SyncResult {
   const now = new Date().toISOString();
   return {
     created: 0,
+    recovered: 0,
     updated: 0,
     completed: 0,
     writtenBack: 0,
@@ -87,8 +104,25 @@ export class SyncEngine {
 
   async sync(settings: SyncSettings): Promise<SyncResult> {
     const result = emptyResult();
-    const projectIds = settings.ranges.map((range) => range.targetProjectId).filter(Boolean);
+    const projectIds = [...new Set(settings.ranges.map((range) => range.targetProjectId).filter(Boolean))];
     addEvent(result, "info", this.t("syncStarted", { ranges: settings.ranges.length, max: settings.maxTasksPerRun }));
+    const recoveryContext: RecoveryContext = {
+      tasksBySourceBlockId: new Map(),
+      creationSafe: true
+    };
+    try {
+      const incompleteTasks = await this.dida.listIncompleteTasks(projectIds);
+      for (const task of incompleteTasks) {
+        indexTaskBySourceBlockId(recoveryContext.tasksBySourceBlockId, task);
+      }
+      addEvent(result, "debug", this.t("incompleteTasksLoaded", { count: incompleteTasks.length }));
+    } catch (error) {
+      recoveryContext.creationSafe = false;
+      const message = this.t("incompleteTasksLoadFailed", { message: (error as Error).message });
+      result.failed += 1;
+      result.failures.push({ message });
+      addEvent(result, "warn", message);
+    }
     let completedTaskIds = new Set<string>();
     try {
       completedTaskIds = await this.dida.listCompletedTaskIds(projectIds);
@@ -123,6 +157,7 @@ export class SyncEngine {
         hpathPrefix: range.hpathPrefix,
         scanned: blocks.length,
         created: 0,
+        recovered: 0,
         updated: 0,
         completed: 0,
         writtenBack: 0,
@@ -146,7 +181,16 @@ export class SyncEngine {
         )
       };
       for (const block of orderedBlocks) {
-        await this.syncBlock(block, range.targetProjectId, completedTaskIds, result, rangeResult, context, settings.newTaskDate ?? "today");
+        await this.syncBlock(
+          block,
+          range.targetProjectId,
+          completedTaskIds,
+          result,
+          rangeResult,
+          context,
+          recoveryContext,
+          settings.newTaskDate ?? "today"
+        );
       }
       addEvent(
         result,
@@ -179,6 +223,7 @@ export class SyncEngine {
     result: SyncResult,
     rangeResult: SyncRangeResult,
     context: RangeSyncContext,
+    recoveryContext: RecoveryContext,
     newTaskDate: "today" | "none"
   ) {
     try {
@@ -213,13 +258,42 @@ export class SyncEngine {
           });
           return;
         }
+        const recoveryMatches = recoveryContext.tasksBySourceBlockId.get(block.id) ?? [];
+        if (recoveryMatches.length > 1) {
+          throw new Error(this.t("ambiguousSourceMarker", { title: parsed.title }));
+        }
+        if (recoveryMatches.length === 1) {
+          const recovered = recoveryMatches[0];
+          if (parent.binding) {
+            await this.dida.setTaskParent(recovered.projectId, recovered.id, parent.binding.taskId);
+          }
+          await this.siyuan.setBlockAttrs(block.id, attrsFor(recovered.id, recovered.projectId, currentHash));
+          context.knownBindings.set(block.id, { taskId: recovered.id, projectId: recovered.projectId });
+          result.recovered = (result.recovered ?? 0) + 1;
+          rangeResult.recovered = (rangeResult.recovered ?? 0) + 1;
+          addEvent(result, "info", this.t("taskBindingRecovered", { title: parsed.title }), {
+            blockId: block.id,
+            rangeId: rangeResult.rangeId
+          });
+          return;
+        }
+        if (!recoveryContext.creationSafe) {
+          throw new Error(this.t("taskCreationBlocked", { title: parsed.title }));
+        }
+        const sourceContent = buildTaskSourceContent(this.t("sourceContent"), block.id);
         const created = await this.dida.createTask(
           targetProjectId,
           parsed.title,
           newTaskDate === "today"
-            ? { content: this.t("sourceContent"), allDay: true, startDate: localAllDayStart() }
-            : { content: this.t("sourceContent") }
+            ? { content: sourceContent, allDay: true, startDate: localAllDayStart() }
+            : { content: sourceContent }
         );
+        indexTaskBySourceBlockId(recoveryContext.tasksBySourceBlockId, {
+          id: created.id,
+          projectId: created.projectId,
+          title: parsed.title,
+          content: sourceContent
+        });
         if (parent.binding) {
           await this.dida.setTaskParent(created.projectId, created.id, parent.binding.taskId);
         }
@@ -331,6 +405,22 @@ export class SyncEngine {
 
     return { hasParent: true };
   }
+}
+
+function indexTaskBySourceBlockId(
+  tasksBySourceBlockId: Map<string, DidaTaskSnapshot[]>,
+  task: DidaTaskSnapshot
+): void {
+  const sourceBlockId = parseSourceBlockId(task.content ?? "");
+  if (!sourceBlockId) {
+    return;
+  }
+  const tasks = tasksBySourceBlockId.get(sourceBlockId);
+  if (tasks) {
+    tasks.push(task);
+    return;
+  }
+  tasksBySourceBlockId.set(sourceBlockId, [task]);
 }
 
 function normalizeOffset(value: number | undefined): number {
