@@ -302,7 +302,7 @@ function renderRange(
   wrapper.querySelector('[data-field="targetProjectId"]')?.addEventListener("change", (event) => {
     const value = (event.target as HTMLInputElement | HTMLSelectElement).value;
     const project = state.projects.find((item) => item.id === value);
-    range.targetProjectName = project?.name ?? range.targetProjectName;
+    range.targetProjectName = project?.name ?? "";
     updateTargetProjectWarning();
   });
   wrapper.querySelector('[data-field="targetProjectId"]')?.addEventListener("input", updateTargetProjectWarning);

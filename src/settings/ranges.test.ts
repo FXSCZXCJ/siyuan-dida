@@ -105,6 +105,25 @@ describe("prepareRangesForSave", () => {
     });
   });
 
+  test("preserves the original card index after dropping an empty draft", () => {
+    expectRangeError(
+      () => prepareRangesForSave([createEmptyRange(1), configuredRange({ notebookId: "" })]),
+      "missing_notebook",
+      { rangeIndex: 2 }
+    );
+  });
+
+  test("drops a fully empty draft even when it retains a stale target list name", () => {
+    expect(
+      prepareRangesForSave([
+        {
+          ...createEmptyRange(1),
+          targetProjectName: "Former list"
+        }
+      ])
+    ).toEqual([]);
+  });
+
   test("rejects duplicate range IDs", () => {
     expectRangeError(
       () =>
@@ -131,6 +150,19 @@ describe("prepareRangesForSave", () => {
         ]),
       "overlapping_ranges",
       { rangeIndex: 2, conflictingRangeIndex: 1 }
+    );
+  });
+
+  test("preserves original card indices for conflicts around an empty draft", () => {
+    expectRangeError(
+      () =>
+        prepareRangesForSave([
+          configuredRange({ id: "range-a" }),
+          createEmptyRange(2),
+          configuredRange({ id: "range-b" })
+        ]),
+      "overlapping_ranges",
+      { rangeIndex: 3, conflictingRangeIndex: 1 }
     );
   });
 

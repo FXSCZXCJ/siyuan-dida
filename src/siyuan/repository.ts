@@ -74,7 +74,9 @@ export function buildTodoBlockSql(
   recoveryBlockIds: ReadonlySet<string> = new Set()
 ): string {
   const hpathClause = range.includeChildren
-    ? `(b.hpath = '${escapeSql(range.hpathPrefix)}' OR instr(b.hpath, '${escapeSql(range.hpathPrefix)}/') = 1)`
+    ? range.hpathPrefix === "/"
+      ? `b.hpath LIKE '/%'`
+      : `(b.hpath = '${escapeSql(range.hpathPrefix)}' OR instr(b.hpath, '${escapeSql(range.hpathPrefix)}/') = 1)`
     : `b.hpath = '${escapeSql(range.hpathPrefix)}'`;
   const incompleteClause = `(
         b.markdown LIKE '- [ ] %'

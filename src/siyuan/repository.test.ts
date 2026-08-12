@@ -85,6 +85,24 @@ describe("buildTodoBlockSql", () => {
     expect(sql).not.toContain("ESCAPE");
   });
 
+  test("matches every document path when the root includes children", () => {
+    const sql = buildTodoBlockSql(
+      {
+        id: "range-root",
+        name: "All documents",
+        notebookId: "box-1",
+        hpathPrefix: "/",
+        includeChildren: true,
+        targetProjectId: "project-1",
+        targetProjectName: "Inbox"
+      },
+      200
+    );
+
+    expect(sql).toContain("b.hpath LIKE '/%'");
+    expect(sql).not.toContain("instr(b.hpath, '//')");
+  });
+
   test("matches literal wildcard characters in child path prefixes", () => {
     const sql = buildTodoBlockSql(
       {

@@ -57,13 +57,13 @@ export function createEmptyRange(index: number, createId: RangeIdFactory = creat
 
 export function prepareRangesForSave(ranges: SyncRange[]): SyncRange[] {
   const normalized = ranges
-    .map((range, index) => normalizeRange(range, index + 1))
-    .filter((range) => !isEmptyRange(range));
+    .map((range, index) => ({ range: normalizeRange(range, index + 1), sourceIndex: index + 1 }))
+    .filter(({ range }) => !isEmptyRange(range));
 
-  normalized.forEach((range, index) => validateRequiredFields(range, index + 1));
+  normalized.forEach(({ range, sourceIndex }) => validateRequiredFields(range, sourceIndex));
   validateUniqueIds(normalized);
   validateNonOverlappingRanges(normalized);
-  return normalized;
+  return normalized.map(({ range }) => range);
 }
 
 export function getRangeValidationMessage(error: unknown, t: Translate): string {
@@ -126,7 +126,7 @@ function normalizeDocumentPath(value: string): string {
 }
 
 function isEmptyRange(range: SyncRange): boolean {
-  return !range.notebookId && !range.hpathPrefix && !range.targetProjectId && !range.targetProjectName;
+  return !range.notebookId && !range.hpathPrefix && !range.targetProjectId;
 }
 
 function validateRequiredFields(range: SyncRange, index: number): void {
@@ -142,29 +142,35 @@ function validateRequiredFields(range: SyncRange, index: number): void {
   }
 }
 
-function validateUniqueIds(ranges: SyncRange[]): void {
+interface IndexedRange {
+  range: SyncRange;
+  sourceIndex: number;
+}
+
+function validateUniqueIds(ranges: IndexedRange[]): void {
   const firstIndexById = new Map<string, number>();
-  ranges.forEach((range, index) => {
+  ranges.forEach(({ range, sourceIndex }, index) => {
     const conflictingIndex = firstIndexById.get(range.id);
     if (conflictingIndex !== undefined) {
+      const conflictingRange = ranges[conflictingIndex];
       throw new RangeValidationError(
         "duplicate_range_id",
-        conflictDetails(range, index, ranges[conflictingIndex], conflictingIndex)
+        conflictDetails(range, sourceIndex, conflictingRange.range, conflictingRange.sourceIndex)
       );
     }
     firstIndexById.set(range.id, index);
   });
 }
 
-function validateNonOverlappingRanges(ranges: SyncRange[]): void {
+function validateNonOverlappingRanges(ranges: IndexedRange[]): void {
   for (let index = 0; index < ranges.length; index += 1) {
     for (let conflictingIndex = 0; conflictingIndex < index; conflictingIndex += 1) {
-      const range = ranges[index];
-      const conflictingRange = ranges[conflictingIndex];
-      if (rangesOverlap(range, conflictingRange)) {
+      const current = ranges[index];
+      const conflict = ranges[conflictingIndex];
+      if (rangesOverlap(current.range, conflict.range)) {
         throw new RangeValidationError(
           "overlapping_ranges",
-          conflictDetails(range, index, conflictingRange, conflictingIndex)
+          conflictDetails(current.range, current.sourceIndex, conflict.range, conflict.sourceIndex)
         );
       }
     }
@@ -201,13 +207,13 @@ function rangeDetails(range: SyncRange, index: number): RangeValidationErrorDeta
 
 function conflictDetails(
   range: SyncRange,
-  index: number,
+  rangeIndex: number,
   conflictingRange: SyncRange,
-  conflictingIndex: number
+  conflictingRangeIndex: number
 ): RangeValidationErrorDetails {
   return {
-    ...rangeDetails(range, index + 1),
-    conflictingRangeIndex: conflictingIndex + 1,
+    ...rangeDetails(range, rangeIndex),
+    conflictingRangeIndex,
     conflictingRangeId: conflictingRange.id,
     conflictingRangeName: conflictingRange.name
   };
