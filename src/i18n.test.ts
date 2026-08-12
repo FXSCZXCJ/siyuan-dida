@@ -13,4 +13,13 @@ describe("createTranslator", () => {
 
     expect(t("syncComplete", { summary: "1 created" })).toBe("Dida sync complete: 1 created");
   });
+
+  test("provides localized range validation copy", () => {
+    expect(createTranslator("en")("rangeValidationMissingNotebook", { range: 3 })).toBe(
+      "Sync range 3 is missing a notebook."
+    );
+    expect(createTranslator("zh-CN")("targetProjectChangedWarning")).toBe(
+      "已有绑定仍保留在原滴答清单中；只有新同步的任务会使用新选择的清单。"
+    );
+  });
 });

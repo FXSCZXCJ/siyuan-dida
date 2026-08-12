@@ -1,13 +1,48 @@
 import { describe, expect, test } from "vitest";
-import { createEmptyRange, prepareRangesForSave } from "./ranges";
+import type { SyncRange } from "../core/types";
+import { createEmptyRange, prepareRangesForSave, RangeValidationError } from "./ranges";
+
+function configuredRange(overrides: Partial<SyncRange> = {}): SyncRange {
+  return {
+    id: "legacy-range-1",
+    name: "Work",
+    notebookId: "box-1",
+    hpathPrefix: "/Work",
+    includeChildren: true,
+    targetProjectId: "project-1",
+    targetProjectName: "Work list",
+    cursorOffset: 0,
+    ...overrides
+  };
+}
+
+function expectRangeError(
+  action: () => unknown,
+  code: RangeValidationError["code"],
+  details: Partial<RangeValidationError["details"]>
+) {
+  try {
+    action();
+    throw new Error("Expected a RangeValidationError");
+  } catch (error) {
+    expect(error).toBeInstanceOf(RangeValidationError);
+    expect(error).toMatchObject({ code, details });
+  }
+}
 
 describe("createEmptyRange", () => {
-  test("creates a default editable range", () => {
-    expect(createEmptyRange(2)).toMatchObject({
-      id: "range-2",
-      name: "同步范围 2",
-      includeChildren: true
-    });
+  test("accepts an ID factory for deterministic callers", () => {
+    expect(createEmptyRange(2, () => "range-fixed").id).toBe("range-fixed");
+  });
+
+  test("creates consecutive drafts with collision-resistant IDs independent of display index", () => {
+    const first = createEmptyRange(2);
+    const second = createEmptyRange(2);
+    const anotherIndex = createEmptyRange(200);
+
+    expect(first).toMatchObject({ name: "同步范围 2", includeChildren: true });
+    expect(first.id).toMatch(/^range-/);
+    expect(new Set([first.id, second.id, anotherIndex.id])).toHaveLength(3);
   });
 });
 
@@ -16,42 +51,128 @@ describe("prepareRangesForSave", () => {
     expect(prepareRangesForSave([createEmptyRange(1)])).toEqual([]);
   });
 
-  test("keeps completed ranges", () => {
+  test("normalizes whitespace and document paths without changing a legacy ID", () => {
     expect(
       prepareRangesForSave([
-        {
-          ...createEmptyRange(1),
-          name: "工作",
-          notebookId: "box-1",
-          hpathPrefix: "/工作",
-          targetProjectId: "project-1",
-          targetProjectName: "工作清单",
-          cursorOffset: 400
-        }
+        configuredRange({
+          id: " legacy-range-1 ",
+          name: " Work ",
+          notebookId: " box-1 ",
+          hpathPrefix: " Work//Weekly/// ",
+          targetProjectId: " project-1 ",
+          targetProjectName: " Work list ",
+          cursorOffset: 400.8
+        })
       ])
     ).toEqual([
       {
-        id: "range-1",
-        name: "工作",
+        id: "legacy-range-1",
+        name: "Work",
         notebookId: "box-1",
-        hpathPrefix: "/工作",
+        hpathPrefix: "/Work/Weekly",
         includeChildren: true,
         targetProjectId: "project-1",
-        targetProjectName: "工作清单",
+        targetProjectName: "Work list",
         cursorOffset: 400
       }
     ]);
   });
 
-  test("rejects partially configured ranges", () => {
-    expect(() =>
+  test("normalizes the root document path without stripping its slash", () => {
+    expect(prepareRangesForSave([configuredRange({ hpathPrefix: "////" })])[0].hpathPrefix).toBe("/");
+  });
+
+  test.each([
+    {
+      label: "notebook",
+      range: configuredRange({ notebookId: "" }),
+      code: "missing_notebook" as const
+    },
+    {
+      label: "document path",
+      range: configuredRange({ hpathPrefix: "" }),
+      code: "missing_path" as const
+    },
+    {
+      label: "target list",
+      range: configuredRange({ targetProjectId: "" }),
+      code: "missing_target" as const
+    }
+  ])("reports a typed error for a missing $label", ({ range, code }) => {
+    expectRangeError(() => prepareRangesForSave([range]), code, {
+      rangeIndex: 1,
+      rangeId: "legacy-range-1"
+    });
+  });
+
+  test("rejects duplicate range IDs", () => {
+    expectRangeError(
+      () =>
+        prepareRangesForSave([
+          configuredRange(),
+          configuredRange({ hpathPrefix: "/Personal", targetProjectId: "project-2" })
+        ]),
+      "duplicate_range_id",
+      {
+        rangeIndex: 2,
+        rangeId: "legacy-range-1",
+        conflictingRangeIndex: 1,
+        conflictingRangeId: "legacy-range-1"
+      }
+    );
+  });
+
+  test("rejects identical paths in the same notebook", () => {
+    expectRangeError(
+      () =>
+        prepareRangesForSave([
+          configuredRange({ id: "range-a", hpathPrefix: "/Work/" }),
+          configuredRange({ id: "range-b", hpathPrefix: "//Work" })
+        ]),
+      "overlapping_ranges",
+      { rangeIndex: 2, conflictingRangeIndex: 1 }
+    );
+  });
+
+  test.each([
+    ["ancestor first", "/Work", true, "/Work/Weekly", false],
+    ["descendant first", "/Work/Weekly", false, "/Work", true]
+  ])("rejects an ancestor range that includes children ($label)", (_label, firstPath, firstChildren, secondPath, secondChildren) => {
+    expectRangeError(
+      () =>
+        prepareRangesForSave([
+          configuredRange({ id: "range-a", hpathPrefix: firstPath, includeChildren: firstChildren }),
+          configuredRange({ id: "range-b", hpathPrefix: secondPath, includeChildren: secondChildren })
+        ]),
+      "overlapping_ranges",
+      { rangeIndex: 2, conflictingRangeIndex: 1 }
+    );
+  });
+
+  test("allows an ancestor without children even when the descendant includes its children", () => {
+    expect(
       prepareRangesForSave([
-        {
-          ...createEmptyRange(1),
-          name: "工作",
-          notebookId: "box-1"
-        }
+        configuredRange({ id: "range-a", hpathPrefix: "/Work", includeChildren: false }),
+        configuredRange({ id: "range-b", hpathPrefix: "/Work/Weekly", includeChildren: true })
       ])
-    ).toThrow("同步范围 1 缺少文档路径");
+    ).toHaveLength(2);
+  });
+
+  test("allows sibling paths", () => {
+    expect(
+      prepareRangesForSave([
+        configuredRange({ id: "range-a", hpathPrefix: "/Work/Weekly" }),
+        configuredRange({ id: "range-b", hpathPrefix: "/Work/Monthly" })
+      ])
+    ).toHaveLength(2);
+  });
+
+  test("allows identical paths in different notebooks", () => {
+    expect(
+      prepareRangesForSave([
+        configuredRange({ id: "range-a", notebookId: "box-1" }),
+        configuredRange({ id: "range-b", notebookId: "box-2" })
+      ])
+    ).toHaveLength(2);
   });
 });

@@ -5,7 +5,12 @@ import { listNotebooks, type SiYuanNotebook } from "../siyuan/api";
 import { settingsForSave, type PluginSettings } from "./defaults";
 import { getResolvedCliPathForCurrentDevice, withResolvedCliPathForCurrentDevice } from "./deviceCli";
 import { formatSyncLogs } from "./logFormat";
-import { createEmptyRange, prepareRangesForSave } from "./ranges";
+import {
+  createEmptyRange,
+  getRangeValidationMessage,
+  getTargetProjectWarning,
+  prepareRangesForSave
+} from "./ranges";
 import type { Translate } from "../i18n";
 
 export interface SettingsPanelOptions {
@@ -17,10 +22,16 @@ export interface SettingsPanelOptions {
 
 export function buildSettingsPanel(options: SettingsPanelOptions): HTMLElement {
   const { t } = options;
+  const ranges = options.settings.ranges.length > 0
+    ? options.settings.ranges.map((range) => ({ ...range }))
+    : [createEmptyRange(1)];
+  const originalTargetProjectIds = new WeakMap<SyncRange, string>();
+  ranges.forEach((range) => originalTargetProjectIds.set(range, range.targetProjectId));
   const state = {
-    ranges: options.settings.ranges.length > 0 ? [...options.settings.ranges] : [createEmptyRange(1)],
+    ranges,
     notebooks: [] as SiYuanNotebook[],
     projects: [] as DidaProject[],
+    originalTargetProjectIds,
     t
   };
 
@@ -157,7 +168,9 @@ export function buildSettingsPanel(options: SettingsPanelOptions): HTMLElement {
   });
 
   root.querySelector('[data-action="addRange"]')?.addEventListener("click", () => {
-    state.ranges.push(createEmptyRange(state.ranges.length + 1));
+    const range = createEmptyRange(state.ranges.length + 1);
+    state.originalTargetProjectIds.set(range, "");
+    state.ranges.push(range);
     renderRanges();
   });
 
@@ -173,7 +186,7 @@ export function buildSettingsPanel(options: SettingsPanelOptions): HTMLElement {
       }));
       showMessage(t("settingsSaved"));
     } catch (error) {
-      showMessage(t("settingsSaveFailed", { message: (error as Error).message }), 5000, "error");
+      showMessage(t("settingsSaveFailed", { message: getRangeValidationMessage(error, t) }), 5000, "error");
     }
   });
 
@@ -219,7 +232,13 @@ export function buildSettingsPanel(options: SettingsPanelOptions): HTMLElement {
 function renderRange(
   range: SyncRange,
   index: number,
-  state: { ranges: SyncRange[]; notebooks: SiYuanNotebook[]; projects: DidaProject[]; t: Translate },
+  state: {
+    ranges: SyncRange[];
+    notebooks: SiYuanNotebook[];
+    projects: DidaProject[];
+    originalTargetProjectIds: WeakMap<SyncRange, string>;
+    t: Translate;
+  },
   rerender: () => void
 ): HTMLElement {
   const wrapper = document.createElement("div");
@@ -251,6 +270,7 @@ function renderRange(
         ${renderProjectControl(range, state.projects, t)}
       </label>
     </div>
+    <div class="dida-sync-muted" data-field="targetProjectWarning" role="status" aria-live="polite" hidden></div>
     <label class="dida-sync-toggle dida-sync-toggle--compact">
       <input type="checkbox" data-field="includeChildren" />
       <span>${t("includeChildDocuments")}</span>
@@ -262,6 +282,17 @@ function renderRange(
   bindInput(wrapper, "hpathPrefix", range, "hpathPrefix");
   bindInput(wrapper, "targetProjectId", range, "targetProjectId");
 
+  const updateTargetProjectWarning = () => {
+    const warning = wrapper.querySelector<HTMLElement>('[data-field="targetProjectWarning"]')!;
+    const message = getTargetProjectWarning(
+      state.originalTargetProjectIds.get(range) ?? "",
+      range.targetProjectId,
+      t
+    );
+    warning.textContent = message;
+    warning.hidden = !message;
+  };
+
   const includeChildren = wrapper.querySelector<HTMLInputElement>('[data-field="includeChildren"]')!;
   includeChildren.checked = range.includeChildren;
   includeChildren.addEventListener("change", () => {
@@ -272,15 +303,21 @@ function renderRange(
     const value = (event.target as HTMLInputElement | HTMLSelectElement).value;
     const project = state.projects.find((item) => item.id === value);
     range.targetProjectName = project?.name ?? range.targetProjectName;
+    updateTargetProjectWarning();
   });
+  wrapper.querySelector('[data-field="targetProjectId"]')?.addEventListener("input", updateTargetProjectWarning);
 
   wrapper.querySelector('[data-action="removeRange"]')?.addEventListener("click", () => {
     state.ranges.splice(index, 1);
     if (state.ranges.length === 0) {
-      state.ranges.push(createEmptyRange(1));
+      const emptyRange = createEmptyRange(1);
+      state.originalTargetProjectIds.set(emptyRange, "");
+      state.ranges.push(emptyRange);
     }
     rerender();
   });
+
+  updateTargetProjectWarning();
 
   return wrapper;
 }

@@ -79,7 +79,13 @@ const translations = {
     notebookId: "Notebook ID",
     selectNotebook: "Select notebook",
     didaListId: "Dida list ID",
-    selectDidaList: "Select Dida list"
+    selectDidaList: "Select Dida list",
+    rangeValidationMissingNotebook: "Sync range {range} is missing a notebook.",
+    rangeValidationMissingPath: "Sync range {range} is missing a document path.",
+    rangeValidationMissingTarget: "Sync range {range} is missing a Dida list.",
+    rangeValidationDuplicateId: "Sync ranges {firstRange} and {secondRange} have the same internal ID.",
+    rangeValidationOverlap: "Sync ranges {firstRange} and {secondRange} overlap.",
+    targetProjectChangedWarning: "Existing bindings remain in their original Dida lists; only new tasks use the newly selected list."
   },
   "zh-CN": {
     saveSettings: "保存设置",
@@ -161,7 +167,13 @@ const translations = {
     notebookId: "笔记本 ID",
     selectNotebook: "选择笔记本",
     didaListId: "滴答清单 ID",
-    selectDidaList: "选择滴答清单"
+    selectDidaList: "选择滴答清单",
+    rangeValidationMissingNotebook: "同步范围 {range} 缺少笔记本。",
+    rangeValidationMissingPath: "同步范围 {range} 缺少文档路径。",
+    rangeValidationMissingTarget: "同步范围 {range} 缺少滴答清单。",
+    rangeValidationDuplicateId: "同步范围 {firstRange} 和 {secondRange} 使用了相同的内部 ID。",
+    rangeValidationOverlap: "同步范围 {firstRange} 和 {secondRange} 存在重叠。",
+    targetProjectChangedWarning: "已有绑定仍保留在原滴答清单中；只有新同步的任务会使用新选择的清单。"
   }
 } as const;
 
