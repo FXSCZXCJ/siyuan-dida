@@ -42,6 +42,9 @@ export default defineConfig({
   },
   test: {
     environment: "node",
+    alias: {
+      siyuan: resolve(__dirname, "src/test/siyuanMock.ts")
+    },
     include: ["src/**/*.test.ts"]
   }
 });

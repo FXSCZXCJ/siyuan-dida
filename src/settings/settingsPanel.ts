@@ -299,13 +299,16 @@ function renderRange(
     range.includeChildren = includeChildren.checked;
   });
 
-  wrapper.querySelector('[data-field="targetProjectId"]')?.addEventListener("change", (event) => {
+  const handleTargetProjectInput = (event: Event) => {
     const value = (event.target as HTMLInputElement | HTMLSelectElement).value;
+    range.targetProjectId = value;
     const project = state.projects.find((item) => item.id === value);
     range.targetProjectName = project?.name ?? "";
     updateTargetProjectWarning();
-  });
-  wrapper.querySelector('[data-field="targetProjectId"]')?.addEventListener("input", updateTargetProjectWarning);
+  };
+  const targetProjectControl = wrapper.querySelector('[data-field="targetProjectId"]');
+  targetProjectControl?.addEventListener("input", handleTargetProjectInput);
+  targetProjectControl?.addEventListener("change", handleTargetProjectInput);
 
   wrapper.querySelector('[data-action="removeRange"]')?.addEventListener("click", () => {
     state.ranges.splice(index, 1);
