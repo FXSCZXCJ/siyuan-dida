@@ -66,6 +66,10 @@ class FakeDida implements DidaGateway {
   public completedTasks = new Set<string>();
   public completedTaskError: Error | null = null;
 
+  async listIncompleteTasks() {
+    return [];
+  }
+
   async createTask(projectId: string, title: string, options?: CreateDidaTaskOptions) {
     this.created.push({ projectId, title, options });
     return { id: `task-${this.created.length}`, projectId };

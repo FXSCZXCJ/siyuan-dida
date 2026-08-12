@@ -9,6 +9,7 @@ import {
   resolveDidaCommand,
   resolveWindowsCmdShim
 } from "./cli";
+import { DidaCliGateway } from "./gateway";
 
 describe("resolveDidaCommand", () => {
   test("uses the configured command when it runs", async () => {
@@ -171,6 +172,52 @@ describe("resolveWindowsCmdShim", () => {
 });
 
 describe("DidaCliClient", () => {
+  test("lists incomplete tasks for the requested projects", async () => {
+    const client = new DidaCliClient("dida", async (command, args) => {
+      expect(command).toBe("dida");
+      expect(args).toEqual([
+        "task",
+        "filter",
+        "--status",
+        "0",
+        "--projects",
+        "project-1,project-2",
+        "--json"
+      ]);
+      return {
+        stdout: JSON.stringify([
+          {
+            id: "task-1",
+            projectId: "project-1",
+            title: "整理会议纪要",
+            content: "来源：思源笔记\nSiYuan-Block-ID: block-1"
+          },
+          { id: "task-2", projectId: "project-2" }
+        ]),
+        stderr: ""
+      };
+    });
+
+    await expect(client.listIncompleteTasks(["project-1", "project-2"])).resolves.toEqual([
+      {
+        id: "task-1",
+        projectId: "project-1",
+        title: "整理会议纪要",
+        content: "来源：思源笔记\nSiYuan-Block-ID: block-1"
+      },
+      { id: "task-2", projectId: "project-2" }
+    ]);
+  });
+
+  test("lists incomplete tasks across projects when no project filter is provided", async () => {
+    const client = new DidaCliClient("dida", async (_command, args) => {
+      expect(args).toEqual(["task", "filter", "--status", "0", "--json"]);
+      return { stdout: "[]", stderr: "" };
+    });
+
+    await expect(client.listIncompleteTasks([])).resolves.toEqual([]);
+  });
+
   test("creates a task with json output", async () => {
     const client = new DidaCliClient("dida", async (command, args) => {
       expect(command).toBe("dida");
@@ -225,5 +272,32 @@ describe("DidaCliClient", () => {
       id: "task-2",
       projectId: "project-1"
     });
+  });
+});
+
+describe("DidaCliGateway", () => {
+  test("delegates incomplete task snapshots to the CLI client", async () => {
+    const client = new DidaCliClient("dida", async (_command, args) => {
+      expect(args).toEqual([
+        "task",
+        "filter",
+        "--status",
+        "0",
+        "--projects",
+        "project-1",
+        "--json"
+      ]);
+      return {
+        stdout: JSON.stringify([
+          { id: "task-1", projectId: "project-1", title: "Task", content: "Source" }
+        ]),
+        stderr: ""
+      };
+    });
+    const gateway = new DidaCliGateway(client);
+
+    await expect(gateway.listIncompleteTasks(["project-1"])).resolves.toEqual([
+      { id: "task-1", projectId: "project-1", title: "Task", content: "Source" }
+    ]);
   });
 });

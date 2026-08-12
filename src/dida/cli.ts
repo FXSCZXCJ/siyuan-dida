@@ -2,7 +2,7 @@ import { execFile } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join, sep } from "node:path";
-import type { CreateDidaTaskOptions } from "../core/types";
+import type { CreateDidaTaskOptions, DidaTaskSnapshot } from "../core/types";
 
 export interface CommandResult {
   stdout: string;
@@ -21,10 +21,7 @@ export interface WindowsCmdShim {
   argsPrefix: string[];
 }
 
-export interface DidaTask {
-  id: string;
-  projectId: string;
-  title?: string;
+export interface DidaTask extends DidaTaskSnapshot {
   status?: number;
   completedTime?: string;
 }
@@ -276,6 +273,16 @@ export class DidaCliClient {
   async listProjects(): Promise<DidaProject[]> {
     const result = await this.runner(this.command, ["project", "list", "--json"]);
     return parseJson<DidaProject[]>(result.stdout);
+  }
+
+  async listIncompleteTasks(projectIds: string[]): Promise<DidaTaskSnapshot[]> {
+    const args = ["task", "filter", "--status", "0"];
+    if (projectIds.length > 0) {
+      args.push("--projects", projectIds.join(","));
+    }
+    args.push("--json");
+    const result = await this.runner(this.command, args);
+    return parseJson<DidaTaskSnapshot[]>(result.stdout);
   }
 
   async createTask(projectId: string, title: string, options: CreateDidaTaskOptions = {}): Promise<DidaTask> {
