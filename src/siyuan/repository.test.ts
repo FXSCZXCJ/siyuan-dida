@@ -38,6 +38,7 @@ describe("buildTodoBlockSql", () => {
   });
 
   test("includes only explicitly recoverable unbound completed todo IDs", () => {
+    const validRecoveryId = "20260812220900-abc1234";
     const sql = buildTodoBlockSql(
       {
         id: "range-1",
@@ -50,12 +51,19 @@ describe("buildTodoBlockSql", () => {
       },
       200,
       0,
-      new Set(["recover-block", "quote'block"])
+      new Set([
+        validRecoveryId,
+        "recover-block",
+        "quote'block",
+        "20260812220900-TOOLONG"
+      ])
     );
 
     expect(sql).toContain("COALESCE(b.ial, '') NOT LIKE '%custom-dida-task-id%'");
-    expect(sql).toContain("b.id IN ('recover-block', 'quote''block')");
-    expect(sql).not.toContain("b.id IN ('historical-block')");
+    expect(sql).toContain(`b.id IN ('${validRecoveryId}')`);
+    expect(sql).not.toContain("recover-block");
+    expect(sql).not.toContain("quote''block");
+    expect(sql).not.toContain("TOOLONG");
   });
 
   test("matches only the selected document and its descendants when children are included", () => {
@@ -116,10 +124,10 @@ describe("SiYuanRepository", () => {
       },
       200,
       0,
-      new Set(["recovery-block"])
+      new Set(["20260812220901-xyz7890"])
     );
 
-    expect(stmt).toContain("b.id IN ('recovery-block')");
+    expect(stmt).toContain("b.id IN ('20260812220901-xyz7890')");
   });
 
   test("treats a null SQL query result as an empty todo list", async () => {

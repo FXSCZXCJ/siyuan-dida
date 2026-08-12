@@ -36,7 +36,8 @@ interface RangeSyncContext {
 interface RecoveryContext {
   tasksBySourceBlockId: Map<string, DidaTaskSnapshot[]>;
   indexedTasksByKey: Map<string, DidaTaskSnapshot>;
-  creationSafe: boolean;
+  creationAttemptedBlockIds: Set<string>;
+  snapshotComplete: boolean;
 }
 
 function emptyResult(): SyncResult {
@@ -110,7 +111,8 @@ export class SyncEngine {
     const recoveryContext: RecoveryContext = {
       tasksBySourceBlockId: new Map(),
       indexedTasksByKey: new Map(),
-      creationSafe: true
+      creationAttemptedBlockIds: new Set(),
+      snapshotComplete: true
     };
     try {
       const incompleteTasks = await this.dida.listIncompleteTasks(projectIds);
@@ -119,7 +121,7 @@ export class SyncEngine {
       }
       addEvent(result, "debug", this.t("incompleteTasksLoaded", { count: incompleteTasks.length }));
     } catch (error) {
-      recoveryContext.creationSafe = false;
+      recoveryContext.snapshotComplete = false;
       const message = this.t("incompleteTasksLoadFailed", { message: (error as Error).message });
       result.failed += 1;
       result.failures.push({ message });
@@ -134,7 +136,7 @@ export class SyncEngine {
       }
       addEvent(result, "debug", this.t("completedTasksLoaded", { count: completedTasks.length }));
     } catch (error) {
-      recoveryContext.creationSafe = false;
+      recoveryContext.snapshotComplete = false;
       result.failed += 1;
       result.failures.push({
         message: this.t("completedTasksLoadFailed", { message: (error as Error).message })
@@ -259,6 +261,9 @@ export class SyncEngine {
 
       if (!existing) {
         const recoveryMatches = recoveryContext.tasksBySourceBlockId.get(block.id) ?? [];
+        if (!recoveryContext.snapshotComplete && recoveryMatches.length > 0) {
+          throw new Error(this.t("recoverySnapshotIncomplete", { title: parsed.title }));
+        }
         if (recoveryMatches.length > 1) {
           throw new Error(this.t("ambiguousSourceMarker", { title: parsed.title }));
         }
@@ -369,9 +374,13 @@ export class SyncEngine {
             childProjectId: targetProjectId
           }));
         }
-        if (!recoveryContext.creationSafe) {
+        if (!recoveryContext.snapshotComplete) {
           throw new Error(this.t("taskCreationBlocked", { title: parsed.title }));
         }
+        if (recoveryContext.creationAttemptedBlockIds.has(block.id)) {
+          throw new Error(this.t("taskCreationOutcomeUnknown", { title: parsed.title }));
+        }
+        recoveryContext.creationAttemptedBlockIds.add(block.id);
         const sourceContent = buildTaskSourceContent(this.t("sourceContent"), block.id);
         const created = await this.dida.createTask(
           targetProjectId,

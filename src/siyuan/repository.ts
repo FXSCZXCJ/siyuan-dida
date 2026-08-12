@@ -1,4 +1,5 @@
 import { markTodoCompleted } from "../core/todoParser";
+import { isSiYuanBlockId } from "../core/sourceMarker";
 import type { SiYuanGateway, SiYuanTodoBlock, SyncRange } from "../core/types";
 import { kernelApi } from "./api";
 
@@ -92,7 +93,7 @@ export function buildTodoBlockSql(
         OR b.markdown LIKE '* {: %}[X] %'
       )`;
   const archivedCompletedClause = `b.ial NOT LIKE '%custom-dida-sync-state="completed-synced"%'`;
-  const recoveryIds = [...recoveryBlockIds].filter(Boolean);
+  const recoveryIds = [...recoveryBlockIds].filter(isSiYuanBlockId);
   const recoverableCompletedClause = recoveryIds.length > 0
     ? `
           OR (

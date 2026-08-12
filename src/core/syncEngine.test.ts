@@ -674,6 +674,36 @@ describe("SyncEngine", () => {
     expect(siyuan.attrs.at(-1)?.attrs["custom-dida-task-id"]).toBe("task-1");
   });
 
+  test("does not retry an unknown creation outcome for the same block in overlapping ranges", async () => {
+    const testSettings = settings();
+    testSettings.ranges.push({
+      ...testSettings.ranges[0],
+      id: "range-2",
+      name: "重叠范围"
+    });
+    const siyuan = new FakeSiYuan([block({})]);
+    const dida = new FakeDida();
+    dida.createSideEffect = (task) => dida.incompleteTasks.push(task);
+    dida.createTaskError = new Error("lost CLI response");
+
+    const first = await new SyncEngine(siyuan, dida).sync(testSettings);
+
+    expect(first).toMatchObject({ created: 0, recovered: 0, failed: 2 });
+    expect(dida.created).toHaveLength(1);
+    expect(first.failures.map((failure) => failure.message)).toEqual([
+      "lost CLI response",
+      expect.stringContaining("创建结果未知")
+    ]);
+
+    dida.createSideEffect = null;
+    dida.createTaskError = null;
+    const second = await new SyncEngine(siyuan, dida).sync(testSettings);
+
+    expect(second.recovered).toBeGreaterThanOrEqual(1);
+    expect(dida.created).toHaveLength(1);
+    expect(siyuan.attrs.at(-1)?.attrs["custom-dida-task-id"]).toBe("task-1");
+  });
+
   test("reports creation immediately and recovers after the SiYuan attribute write fails", async () => {
     const siyuan = new FakeSiYuan([block({})]);
     siyuan.setBlockAttrsError = new Error("attribute write failed");
@@ -869,6 +899,56 @@ describe("SyncEngine", () => {
       expect.stringContaining("Failed to load incomplete Dida tasks"),
       expect.stringContaining("Blocked creating Dida task")
     ]);
+  });
+
+  test("does not recover from a completed marker when the incomplete snapshot failed", async () => {
+    const siyuan = new FakeSiYuan([block({})]);
+    const dida = new FakeDida();
+    dida.incompleteTaskError = new Error("incomplete unavailable");
+    dida.completedTaskSnapshots = [
+      {
+        id: "completed-task",
+        projectId: "project-1",
+        title: "整理会议纪要",
+        content: "来源：思源笔记\nSiYuan-Block-ID: block-1"
+      }
+    ];
+
+    const result = await new SyncEngine(siyuan, dida).sync(settings());
+
+    expect(result).toMatchObject({ recovered: 0, updated: 0, completed: 0, writtenBack: 0, failed: 2 });
+    expect(result.failures[1].message).toContain("恢复快照不完整");
+    expect(dida.created).toEqual([]);
+    expect(dida.updated).toEqual([]);
+    expect(dida.parents).toEqual([]);
+    expect(dida.completed).toEqual([]);
+    expect(siyuan.completed).toEqual([]);
+    expect(siyuan.attrs).toEqual([]);
+  });
+
+  test("does not recover from an incomplete marker when the completed snapshot failed", async () => {
+    const siyuan = new FakeSiYuan([block({})]);
+    const dida = new FakeDida();
+    dida.incompleteTasks = [
+      {
+        id: "incomplete-task",
+        projectId: "project-1",
+        title: "旧标题",
+        content: "来源：思源笔记\nSiYuan-Block-ID: block-1"
+      }
+    ];
+    dida.completedTaskError = new Error("completed unavailable");
+
+    const result = await new SyncEngine(siyuan, dida).sync(settings());
+
+    expect(result).toMatchObject({ recovered: 0, updated: 0, completed: 0, writtenBack: 0, failed: 2 });
+    expect(result.failures[1].message).toContain("恢复快照不完整");
+    expect(dida.created).toEqual([]);
+    expect(dida.updated).toEqual([]);
+    expect(dida.parents).toEqual([]);
+    expect(dida.completed).toEqual([]);
+    expect(siyuan.completed).toEqual([]);
+    expect(siyuan.attrs).toEqual([]);
   });
 
   test("loads incomplete and completed snapshots once with unique configured project IDs", async () => {
