@@ -12,10 +12,8 @@ import {
 } from "./cli";
 import { DidaCliGateway } from "./gateway";
 
-const fixedNow = () => new Date("2030-01-01T00:00:00Z");
 const completedOptions = (overrides: Partial<DidaCliClientOptions> = {}): DidaCliClientOptions => ({
   cliVersion: "0.1.10",
-  now: fixedNow,
   ...overrides
 });
 
@@ -191,30 +189,34 @@ describe("DidaCliClient", () => {
   }
 
   test("lists incomplete tasks for the requested projects", async () => {
-    const client = new DidaCliClient("dida", async (command, args) => {
-      expect(command).toBe("dida");
-      expect(args).toEqual([
-        "task",
-        "filter",
-        "--status",
-        "0",
-        "--projects",
-        "project-1,project-2",
-        "--json"
-      ]);
-      return {
-        stdout: JSON.stringify([
-          {
-            id: "task-1",
-            projectId: "project-1",
-            title: "整理会议纪要",
-            content: "来源：思源笔记\nSiYuan-Block-ID: block-1"
-          },
-          { id: "task-2", projectId: "project-2" }
-        ]),
-        stderr: ""
-      };
-    });
+    const client = new DidaCliClient(
+      "dida",
+      async (command, args) => {
+        expect(command).toBe("dida");
+        expect(args).toEqual([
+          "task",
+          "filter",
+          "--status",
+          "0",
+          "--projects",
+          "project-1,project-2",
+          "--json"
+        ]);
+        return {
+          stdout: JSON.stringify([
+            {
+              id: "task-1",
+              projectId: "project-1",
+              title: "整理会议纪要",
+              content: "来源：思源笔记\nSiYuan-Block-ID: block-1"
+            },
+            { id: "task-2", projectId: "project-2" }
+          ]),
+          stderr: ""
+        };
+      },
+      completedOptions()
+    );
 
     await expect(client.listIncompleteTasks(["project-1", "project-2"])).resolves.toEqual([
       {
@@ -228,12 +230,69 @@ describe("DidaCliClient", () => {
   });
 
   test("lists incomplete tasks across projects when no project filter is provided", async () => {
-    const client = new DidaCliClient("dida", async (_command, args) => {
-      expect(args).toEqual(["task", "filter", "--status", "0", "--json"]);
-      return { stdout: "[]", stderr: "" };
-    });
+    const client = new DidaCliClient(
+      "dida",
+      async (_command, args) => {
+        expect(args).toEqual(["task", "filter", "--status", "0", "--json"]);
+        return { stdout: "[]", stderr: "" };
+      },
+      completedOptions()
+    );
 
     await expect(client.listIncompleteTasks([])).resolves.toEqual([]);
+  });
+
+  test.each([undefined, "", "0.1.9", "0.1.11", "toString", "constructor", "__proto__"])(
+    "rejects unsupported CLI version %j before requesting incomplete tasks",
+    async (cliVersion) => {
+      let calls = 0;
+      const client = new DidaCliClient(
+        "dida",
+        async () => {
+          calls += 1;
+          return { stdout: "[]", stderr: "" };
+        },
+        completedOptions({ cliVersion })
+      );
+
+      await expect(client.listIncompleteTasks(["project-1"]))
+        .rejects.toThrow(/incomplete snapshot.*unsupported|unsupported.*incomplete snapshot/i);
+      expect(calls).toBe(0);
+    }
+  );
+
+  test("rejects a saturated incomplete snapshot", async () => {
+    const client = new DidaCliClient(
+      "dida",
+      async () => ({
+        stdout: JSON.stringify(
+          Array.from({ length: 200 }, (_, index) => ({ id: `task-${index}`, projectId: "project-1" }))
+        ),
+        stderr: ""
+      }),
+      completedOptions()
+    );
+
+    await expect(client.listIncompleteTasks(["project-1"]))
+      .rejects.toThrow(/incomplete snapshot.*200|incomplete snapshot.*limit/i);
+  });
+
+  test.each([
+    ["non-array response", { tasks: [] }],
+    ["missing id", [{ projectId: "project-1" }]],
+    ["empty id", [{ id: " ", projectId: "project-1" }]],
+    ["missing projectId", [{ id: "task-1" }]],
+    ["empty projectId", [{ id: "task-1", projectId: " " }]],
+    ["foreign project", [{ id: "task-1", projectId: "project-2" }]]
+  ])("rejects an unsafe incomplete snapshot with %s", async (_label, response) => {
+    const client = new DidaCliClient(
+      "dida",
+      async () => ({ stdout: JSON.stringify(response), stderr: "" }),
+      completedOptions()
+    );
+
+    await expect(client.listIncompleteTasks(["project-1"]))
+      .rejects.toThrow(/incomplete snapshot/i);
   });
 
   test("creates a task with json output", async () => {
@@ -303,7 +362,7 @@ describe("DidaCliClient", () => {
           "--start-date",
           "1970-01-01T00:00:00Z",
           "--end-date",
-          "2030-01-01T00:05:00Z",
+          "9999-12-31T23:59:59Z",
           "--projects",
           "project-1,project-2",
           "--json"
@@ -333,7 +392,7 @@ describe("DidaCliClient", () => {
           "--start-date",
           "1970-01-01T00:00:00Z",
           "--end-date",
-          "2030-01-01T00:05:00Z",
+          "9999-12-31T23:59:59Z",
           "--json"
         ]);
         return { stdout: "[]", stderr: "" };
@@ -442,8 +501,8 @@ describe("DidaCliClient", () => {
     ["missing", undefined],
     ["invalid", "not-a-date"],
     ["before the requested interval", "1969-12-31T23:59:59Z"],
-    ["after the requested interval", "2030-01-01T00:05:01Z"],
-    ["after the inclusive endpoint within the same second", "2030-01-01T00:05:00.001Z"]
+    ["after the requested interval", "+010000-01-01T00:00:00Z"],
+    ["after the inclusive endpoint within the same second", "9999-12-31T23:59:59.001Z"]
   ])("rejects a completed task whose completedTime is %s", async (_label, completedTime) => {
     const client = new DidaCliClient(
       "dida",
@@ -465,33 +524,6 @@ describe("DidaCliClient", () => {
         calls += 1;
         return {
           stdout: JSON.stringify(
-            calls === 1
-              ? Array.from({ length: 200 }, (_, index) =>
-                  completedTask(`task-${index}`, flagValue(args, "--start-date"))
-                )
-              : []
-          ),
-          stderr: ""
-        };
-      },
-      completedOptions({
-        now: () => new Date("1970-01-01T00:00:01Z"),
-        clockSkewSeconds: 0
-      })
-    );
-
-    await expect(client.listCompletedTasks(["project-1"])).rejects.toThrow(/one-second|resolution/i);
-    expect(calls).toBe(1);
-  });
-
-  test("rejects a saturated zero-span shard", async () => {
-    let calls = 0;
-    const client = new DidaCliClient(
-      "dida",
-      async (_command, args) => {
-        calls += 1;
-        return {
-          stdout: JSON.stringify(
             Array.from({ length: 200 }, (_, index) =>
               completedTask(`task-${index}`, flagValue(args, "--start-date"))
             )
@@ -499,14 +531,11 @@ describe("DidaCliClient", () => {
           stderr: ""
         };
       },
-      completedOptions({
-        now: () => new Date("1970-01-01T00:00:00Z"),
-        clockSkewSeconds: 0
-      })
+      completedOptions()
     );
 
     await expect(client.listCompletedTasks(["project-1"])).rejects.toThrow(/one-second|resolution/i);
-    expect(calls).toBe(1);
+    expect(calls).toBeGreaterThan(1);
   });
 
   test("rejects when range-insensitive saturated responses exhaust the query budget", async () => {
@@ -624,23 +653,27 @@ describe("DidaCliClient", () => {
 
 describe("DidaCliGateway", () => {
   test("delegates incomplete task snapshots to the CLI client", async () => {
-    const client = new DidaCliClient("dida", async (_command, args) => {
-      expect(args).toEqual([
-        "task",
-        "filter",
-        "--status",
-        "0",
-        "--projects",
-        "project-1",
-        "--json"
-      ]);
-      return {
-        stdout: JSON.stringify([
-          { id: "task-1", projectId: "project-1", title: "Task", content: "Source" }
-        ]),
-        stderr: ""
-      };
-    });
+    const client = new DidaCliClient(
+      "dida",
+      async (_command, args) => {
+        expect(args).toEqual([
+          "task",
+          "filter",
+          "--status",
+          "0",
+          "--projects",
+          "project-1",
+          "--json"
+        ]);
+        return {
+          stdout: JSON.stringify([
+            { id: "task-1", projectId: "project-1", title: "Task", content: "Source" }
+          ]),
+          stderr: ""
+        };
+      },
+      completedOptions()
+    );
     const gateway = new DidaCliGateway(client);
 
     await expect(gateway.listIncompleteTasks(["project-1"])).resolves.toEqual([
@@ -658,7 +691,7 @@ describe("DidaCliGateway", () => {
           "--start-date",
           "1970-01-01T00:00:00Z",
           "--end-date",
-          "2030-01-01T00:05:00Z",
+          "9999-12-31T23:59:59Z",
           "--projects",
           "project-1",
           "--json"

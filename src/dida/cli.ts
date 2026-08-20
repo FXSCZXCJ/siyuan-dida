@@ -33,8 +33,6 @@ export interface DidaProject {
 
 export interface DidaCliClientOptions {
   cliVersion?: string;
-  now?: () => Date;
-  clockSkewSeconds?: number;
   maxCompletedQueries?: number;
   deadlineNow?: () => number;
   completedSnapshotDeadlineMs?: number;
@@ -46,11 +44,18 @@ interface CompletedTaskInterval {
 }
 
 const COMPLETED_TASK_LOWER_BOUND_SECOND = 0;
-const DEFAULT_COMPLETED_TASK_CLOCK_SKEW_SECONDS = 5 * 60;
 const DEFAULT_MAX_COMPLETED_QUERIES = 256;
 const DEFAULT_COMPLETED_SNAPSHOT_DEADLINE_MS = 120_000;
-const COMPLETED_SNAPSHOT_PROTOCOLS: ReadonlyMap<string, { resultLimit: number }> = new Map([
-  ["0.1.10", { resultLimit: 200 }]
+interface SnapshotProtocol {
+  resultLimit: number;
+  completedUpperBoundSecond: number;
+}
+
+const SNAPSHOT_PROTOCOLS: ReadonlyMap<string, SnapshotProtocol> = new Map([
+  ["0.1.10", {
+    resultLimit: 200,
+    completedUpperBoundSecond: Date.parse("9999-12-31T23:59:59Z") / 1_000
+  }]
 ]);
 
 export const defaultRunner: CommandRunner = (command, args) =>
@@ -312,13 +317,27 @@ export class DidaCliClient {
   }
 
   async listIncompleteTasks(projectIds: string[]): Promise<DidaTaskSnapshot[]> {
+    const protocol = snapshotProtocol(this.options.cliVersion, "Incomplete");
     const args = ["task", "filter", "--status", "0"];
     if (projectIds.length > 0) {
       args.push("--projects", projectIds.join(","));
     }
     args.push("--json");
     const result = await this.runner(this.command, args);
-    return parseJson<DidaTaskSnapshot[]>(result.stdout);
+    const tasks = parseJson<DidaTaskSnapshot[]>(result.stdout);
+    if (!Array.isArray(tasks)) {
+      throw new Error("Incomplete snapshot incomplete: CLI response is not an array");
+    }
+    if (tasks.length >= protocol.resultLimit) {
+      throw new Error(
+        `Incomplete snapshot incomplete: result limit of ${protocol.resultLimit} reached`
+      );
+    }
+    const requestedProjectIds = new Set(projectIds);
+    for (const task of tasks) {
+      assertSnapshotTaskIdentity(task, requestedProjectIds, "Incomplete");
+    }
+    return tasks;
   }
 
   async createTask(projectId: string, title: string, options: CreateDidaTaskOptions = {}): Promise<DidaTask> {
@@ -381,15 +400,8 @@ export class DidaCliClient {
   }
 
   async listCompletedTasks(projectIds: string[]): Promise<DidaTask[]> {
-    const protocol = completedSnapshotProtocol(this.options.cliVersion);
-    const clockSkewSeconds = this.options.clockSkewSeconds
-      ?? DEFAULT_COMPLETED_TASK_CLOCK_SKEW_SECONDS;
-    const endSecond = Math.floor(
-      ((this.options.now ?? (() => new Date()))().getTime() / 1_000) + clockSkewSeconds
-    );
-    if (!Number.isSafeInteger(endSecond) || endSecond < COMPLETED_TASK_LOWER_BOUND_SECOND) {
-      throw new Error("Completed snapshot incomplete: invalid upper time bound");
-    }
+    const protocol = snapshotProtocol(this.options.cliVersion, "Completed");
+    const endSecond = protocol.completedUpperBoundSecond;
 
     const maxQueries = this.options.maxCompletedQueries ?? DEFAULT_MAX_COMPLETED_QUERIES;
     const deadlineMs = this.options.completedSnapshotDeadlineMs
@@ -463,17 +475,7 @@ export class DidaCliClient {
       throw new Error("Completed snapshot incomplete: CLI response is not an array");
     }
     for (const task of tasks) {
-      if (typeof task.id !== "string" || task.id.trim().length === 0) {
-        throw new Error("Completed snapshot incomplete: task has an invalid id");
-      }
-      if (typeof task.projectId !== "string" || task.projectId.trim().length === 0) {
-        throw new Error(`Completed snapshot incomplete: task ${task.id} has an invalid projectId`);
-      }
-      if (requestedProjectIds.size > 0 && !requestedProjectIds.has(task.projectId)) {
-        throw new Error(
-          `Completed snapshot incomplete: task ${task.projectId}/${task.id} is outside the requested projects`
-        );
-      }
+      assertSnapshotTaskIdentity(task, requestedProjectIds, "Completed");
       const completedAt = typeof task.completedTime === "string"
         ? Date.parse(task.completedTime)
         : Number.NaN;
@@ -491,16 +493,37 @@ export class DidaCliClient {
   }
 }
 
-function completedSnapshotProtocol(cliVersion: string | undefined): { resultLimit: number } {
+function snapshotProtocol(
+  cliVersion: string | undefined,
+  snapshotName: "Incomplete" | "Completed"
+): SnapshotProtocol {
   const normalizedVersion = cliVersion?.trim().replace(/^v/i, "") ?? "";
-  const protocol = COMPLETED_SNAPSHOT_PROTOCOLS.get(normalizedVersion);
+  const protocol = SNAPSHOT_PROTOCOLS.get(normalizedVersion);
   if (!protocol) {
     const displayedVersion = cliVersion?.trim() || "missing";
     throw new Error(
-      `Completed snapshot unsupported for dida CLI version ${displayedVersion}; verified version: 0.1.10`
+      `${snapshotName} snapshot unsupported for dida CLI version ${displayedVersion}; verified version: 0.1.10`
     );
   }
   return protocol;
+}
+
+function assertSnapshotTaskIdentity(
+  task: DidaTaskSnapshot,
+  requestedProjectIds: ReadonlySet<string>,
+  snapshotName: "Incomplete" | "Completed"
+): void {
+  if (typeof task?.id !== "string" || task.id.trim().length === 0) {
+    throw new Error(`${snapshotName} snapshot incomplete: task has an invalid id`);
+  }
+  if (typeof task.projectId !== "string" || task.projectId.trim().length === 0) {
+    throw new Error(`${snapshotName} snapshot incomplete: task ${task.id} has an invalid projectId`);
+  }
+  if (requestedProjectIds.size > 0 && !requestedProjectIds.has(task.projectId)) {
+    throw new Error(
+      `${snapshotName} snapshot incomplete: task ${task.projectId}/${task.id} is outside the requested projects`
+    );
+  }
 }
 
 function assertCompletedSnapshotDeadline(
