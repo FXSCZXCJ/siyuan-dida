@@ -452,20 +452,49 @@ describe("DidaCliClient", () => {
   });
 
   test("rejects a saturated shard at the CLI's one-second time resolution", async () => {
+    let calls = 0;
     const client = new DidaCliClient(
       "dida",
-      async (_command, args) => ({
-        stdout: JSON.stringify(
-          Array.from({ length: 200 }, (_, index) =>
-            completedTask(`task-${index}`, flagValue(args, "--start-date"))
-          )
-        ),
-        stderr: ""
-      }),
+      async (_command, args) => {
+        calls += 1;
+        return {
+          stdout: JSON.stringify(
+            calls === 1
+              ? Array.from({ length: 200 }, (_, index) =>
+                  completedTask(`task-${index}`, flagValue(args, "--start-date"))
+                )
+              : []
+          ),
+          stderr: ""
+        };
+      },
+      { now: () => new Date("1970-01-01T00:00:01Z"), clockSkewSeconds: 0 }
+    );
+
+    await expect(client.listCompletedTasks(["project-1"])).rejects.toThrow(/one-second|resolution/i);
+    expect(calls).toBe(1);
+  });
+
+  test("rejects a saturated zero-span shard", async () => {
+    let calls = 0;
+    const client = new DidaCliClient(
+      "dida",
+      async (_command, args) => {
+        calls += 1;
+        return {
+          stdout: JSON.stringify(
+            Array.from({ length: 200 }, (_, index) =>
+              completedTask(`task-${index}`, flagValue(args, "--start-date"))
+            )
+          ),
+          stderr: ""
+        };
+      },
       { now: () => new Date("1970-01-01T00:00:00Z"), clockSkewSeconds: 0 }
     );
 
     await expect(client.listCompletedTasks(["project-1"])).rejects.toThrow(/one-second|resolution/i);
+    expect(calls).toBe(1);
   });
 
   test("rejects when range-insensitive saturated responses exhaust the query budget", async () => {

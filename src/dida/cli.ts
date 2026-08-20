@@ -452,13 +452,7 @@ function formatUtcSecond(epochSecond: number): string {
 function splitCompletedTaskInterval(
   interval: CompletedTaskInterval
 ): [CompletedTaskInterval, CompletedTaskInterval] | undefined {
-  if (interval.startSecond === interval.endSecond) return undefined;
-  if (interval.endSecond - interval.startSecond === 1) {
-    return [
-      { startSecond: interval.startSecond, endSecond: interval.startSecond },
-      { startSecond: interval.endSecond, endSecond: interval.endSecond }
-    ];
-  }
+  if (interval.endSecond - interval.startSecond <= 1) return undefined;
   const midpoint = Math.floor((interval.startSecond + interval.endSecond) / 2);
   return [
     { startSecond: interval.startSecond, endSecond: midpoint },
