@@ -347,4 +347,47 @@ describe("buildSettingsPanel range target behavior", () => {
 
     expect(submittedCursors).toEqual([0, 91]);
   });
+
+  test("uses the active locale for displayed and copied sync logs", async () => {
+    const initial = settings();
+    initial.logs = [
+      {
+        created: 1,
+        recovered: 1,
+        updated: 0,
+        completed: 0,
+        writtenBack: 0,
+        failed: 0,
+        skipped: 0,
+        scanned: 1,
+        rangeResults: [],
+        rangeCursorOffsets: {},
+        events: [],
+        failures: [],
+        startedAt: "2026-06-27T01:00:00.000Z",
+        finishedAt: "2026-06-27T01:00:01.000Z"
+      }
+    ];
+    const writeText = vi.fn<(text: string) => Promise<void>>(async () => undefined);
+    Object.defineProperty(navigator, "clipboard", {
+      configurable: true,
+      value: { writeText }
+    });
+    const panel = buildSettingsPanel({
+      settings: initial,
+      t: createTranslator("en"),
+      onSave: async (savedSettings) => savedSettings,
+      onClearLogs: async () => undefined
+    });
+
+    expect(panel.querySelector<HTMLElement>('[data-field="logs"]')!.textContent).toContain(
+      "Summary: scanned 1, created 1, recovered 1"
+    );
+
+    panel.querySelector<HTMLButtonElement>('[data-action="copyLogs"]')!.click();
+    await flushAsyncRendering();
+
+    expect(writeText).toHaveBeenCalledWith(expect.stringContaining("Summary: scanned 1, created 1, recovered 1"));
+    expect(writeText.mock.calls[0][0]).not.toMatch(/[\u3400-\u9fff]/u);
+  });
 });

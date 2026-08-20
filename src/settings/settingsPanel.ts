@@ -122,7 +122,7 @@ export function buildSettingsPanel(options: SettingsPanelOptions): HTMLElement {
   autoSync.checked = options.settings.autoSync;
   syncIntervalSeconds.value = String(options.settings.syncIntervalSeconds);
   newTaskDate.value = options.settings.newTaskDate;
-  logs.textContent = formatSyncLogs(options.settings.logs.slice(0, 10));
+  logs.textContent = formatSyncLogs(options.settings.logs.slice(0, 10), t);
 
   const renderRanges = () => {
     rangesEl.replaceChildren(...state.ranges.map((range, index) => renderRange(range, index, state, renderRanges)));
@@ -210,7 +210,7 @@ export function buildSettingsPanel(options: SettingsPanelOptions): HTMLElement {
 
   root.querySelector('[data-action="copyLogs"]')?.addEventListener("click", async () => {
     try {
-      await navigator.clipboard.writeText(formatSyncLogs(options.settings.logs.slice(0, 20)));
+      await navigator.clipboard.writeText(formatSyncLogs(options.settings.logs.slice(0, 20), t));
       showMessage(t("logsCopied"));
     } catch (error) {
       showMessage(t("logsCopyFailed", { message: (error as Error).message }), 5000, "error");
@@ -221,7 +221,7 @@ export function buildSettingsPanel(options: SettingsPanelOptions): HTMLElement {
     try {
       await options.onClearLogs();
       options.settings.logs = [];
-      logs.textContent = formatSyncLogs([]);
+      logs.textContent = formatSyncLogs([], t);
       showMessage(t("logsCleared"));
     } catch (error) {
       showMessage(t("logsClearFailed", { message: (error as Error).message }), 5000, "error");

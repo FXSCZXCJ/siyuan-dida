@@ -257,4 +257,38 @@ describe("loaded sync-range safety gate", () => {
       );
     }
   );
+
+  test("uses the active locale for the sync completion summary", async () => {
+    const validSettings = loadedSettings("overlap");
+    validSettings.autoSync = false;
+    validSettings.syncOnStartup = false;
+    validSettings.ranges = validSettings.ranges.slice(0, 1);
+    pluginMocks.loadedSettings = validSettings;
+    pluginMocks.engineSync.mockResolvedValueOnce({
+      created: 2,
+      recovered: 1,
+      updated: 3,
+      completed: 4,
+      writtenBack: 5,
+      failed: 0,
+      skipped: 6,
+      scanned: 7,
+      rangeResults: [],
+      rangeCursorOffsets: { "range-1": 0 },
+      events: [],
+      failures: [],
+      startedAt: "2026-06-27T01:00:00.000Z",
+      finishedAt: "2026-06-27T01:00:01.000Z"
+    } as never);
+    const plugin = new SiyuanDidaPlugin({} as never);
+    await plugin.onload();
+
+    pluginMocks.topBarButton?.click();
+    await flushPromises();
+    await flushPromises();
+
+    expect(pluginMocks.showMessage).toHaveBeenCalledWith(
+      "Dida sync complete: scanned 7, created 2, recovered 1, updated 3, completed 4, written back 5, skipped 6, failed 0"
+    );
+  });
 });

@@ -199,7 +199,7 @@ export default class SiyuanDidaPlugin extends Plugin {
       this.settings.logs = await this.storage.recordSync(this.settings, result);
       this.updateStatus(result.failed > 0 ? this.t("statusFailed", { time: new Date().toLocaleTimeString() }) : this.t("statusSynced", { time: new Date().toLocaleTimeString() }));
       if (!options.silentSkip) {
-        showMessage(this.t("syncComplete", { summary: summarizeSyncLog(result) }));
+        showMessage(this.t("syncComplete", { summary: summarizeSyncLog(result, this.t) }));
       }
     } catch (error) {
       const result = createErrorSyncResult((error as Error).message);
