@@ -4,6 +4,7 @@ import { beforeEach, describe, expect, test, vi } from "vitest";
 import { createTranslator } from "../i18n";
 import type { PluginSettings } from "./defaults";
 import { getRangeValidationMessage, getTargetProjectWarning, RangeValidationError } from "./ranges";
+import { createSyncStatusController } from "./statusPanel";
 
 const panelMocks = vi.hoisted(() => ({
   notebooks: Promise.resolve([] as Array<{ id: string; name: string }>),
@@ -24,6 +25,14 @@ vi.mock("../dida/cli", () => ({
 }));
 
 import { buildSettingsPanel } from "./settingsPanel";
+
+function buildPanel(options: Omit<Parameters<typeof buildSettingsPanel>[0], "status" | "onSyncNow">) {
+  return buildSettingsPanel({
+    ...options,
+    status: createSyncStatusController({ state: "pending" }),
+    onSyncNow: vi.fn()
+  }).element;
+}
 
 const details = {
   rangeIndex: 2,
@@ -134,7 +143,7 @@ describe("buildSettingsPanel range target behavior", () => {
     const notebooks = deferred<Array<{ id: string; name: string }>>();
     panelMocks.notebooks = notebooks.promise;
     const onSave = vi.fn(async (savedSettings: PluginSettings) => savedSettings);
-    const panel = buildSettingsPanel({
+    const panel = buildPanel({
       settings: settings(),
       t: createTranslator("en"),
       onSave,
@@ -158,7 +167,7 @@ describe("buildSettingsPanel range target behavior", () => {
   });
 
   test("fallback input shows the warning for a changed target and hides it after reverting", () => {
-    const panel = buildSettingsPanel({
+    const panel = buildPanel({
       settings: settings(),
       t: createTranslator("en"),
       onSave: async (savedSettings) => savedSettings,
@@ -188,7 +197,7 @@ describe("buildSettingsPanel range target behavior", () => {
       { id: "project-2", name: "Second list" }
     ]);
     const onSave = vi.fn(async (savedSettings: PluginSettings) => savedSettings);
-    const panel = buildSettingsPanel({
+    const panel = buildPanel({
       settings: settings(),
       t: createTranslator("en"),
       onSave,
@@ -218,7 +227,7 @@ describe("buildSettingsPanel range target behavior", () => {
 
   test("rebases the saved target so changing from B back to A warns", async () => {
     const onSave = vi.fn(async (savedSettings: PluginSettings) => savedSettings);
-    const panel = buildSettingsPanel({
+    const panel = buildPanel({
       settings: settings(),
       t: createTranslator("en"),
       onSave,
@@ -244,7 +253,7 @@ describe("buildSettingsPanel range target behavior", () => {
     const onSave = vi.fn(async (_savedSettings: PluginSettings) => {
       throw new Error("runtime write failed");
     });
-    const panel = buildSettingsPanel({
+    const panel = buildPanel({
       settings: settings(),
       t: createTranslator("en"),
       onSave,
@@ -269,7 +278,7 @@ describe("buildSettingsPanel range target behavior", () => {
 
   test("uses a newly added range target as its baseline after the first save", async () => {
     const onSave = vi.fn(async (savedSettings: PluginSettings) => savedSettings);
-    const panel = buildSettingsPanel({
+    const panel = buildPanel({
       settings: settings(),
       t: createTranslator("en"),
       onSave,
@@ -308,7 +317,7 @@ describe("buildSettingsPanel range target behavior", () => {
       savedIds.push(savedSettings.ranges[0].id);
       return savedSettings;
     });
-    const panel = buildSettingsPanel({
+    const panel = buildPanel({
       settings: initial,
       t: createTranslator("en"),
       onSave,
@@ -333,7 +342,7 @@ describe("buildSettingsPanel range target behavior", () => {
         ranges: savedSettings.ranges.map((range) => ({ ...range, cursorOffset: 91 }))
       };
     });
-    const panel = buildSettingsPanel({
+    const panel = buildPanel({
       settings: settings(),
       t: createTranslator("en"),
       onSave,
@@ -373,7 +382,7 @@ describe("buildSettingsPanel range target behavior", () => {
       configurable: true,
       value: { writeText }
     });
-    const panel = buildSettingsPanel({
+    const panel = buildPanel({
       settings: initial,
       t: createTranslator("en"),
       onSave: async (savedSettings) => savedSettings,
@@ -389,5 +398,29 @@ describe("buildSettingsPanel range target behavior", () => {
 
     expect(writeText).toHaveBeenCalledWith(expect.stringContaining("Summary: scanned 1, created 1, recovered 1"));
     expect(writeText.mock.calls[0][0]).not.toMatch(/[\u3400-\u9fff]/u);
+  });
+});
+
+describe("buildSettingsPanel status integration", () => {
+  test("mounts the live status panel near the top and exposes cleanup", () => {
+    const status = createSyncStatusController({ state: "pending" });
+    const onSyncNow = vi.fn();
+    const view = buildSettingsPanel({
+      settings: settings(),
+      t: createTranslator("en"),
+      status,
+      onSyncNow,
+      onSave: async (savedSettings) => savedSettings,
+      onClearLogs: async () => undefined
+    });
+
+    const sections = view.element.querySelectorAll(".dida-sync-section");
+    expect(sections[0].classList.contains("dida-sync-status")).toBe(true);
+    view.element.querySelector<HTMLButtonElement>('[data-action="syncNow"]')!.click();
+    expect(onSyncNow).toHaveBeenCalledOnce();
+
+    view.destroy();
+    status.publish({ state: "failed", message: "after destroy" });
+    expect(view.element.textContent).not.toContain("after destroy");
   });
 });

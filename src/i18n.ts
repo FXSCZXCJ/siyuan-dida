@@ -37,6 +37,7 @@ const translations = {
     settingsTitle: "Dida sync settings",
     statusSynced: "Dida: {time} synced",
     statusFailed: "Dida: {time} sync failed",
+    statusSyncing: "Dida: syncing…",
     syncFailed: "Dida sync failed: {message}",
     connectionAndSync: "Connection and sync",
     deviceDiscovery: "Each device discovers its local dida command automatically. You can also provide a command or absolute path.",
@@ -98,7 +99,22 @@ const translations = {
     rangeValidationMissingTarget: "Sync range {range} is missing a Dida list.",
     rangeValidationDuplicateId: "Sync ranges {firstRange} and {secondRange} have the same internal ID.",
     rangeValidationOverlap: "Sync ranges {firstRange} and {secondRange} overlap.",
-    targetProjectChangedWarning: "Existing bindings remain in their original Dida lists; only new tasks use the newly selected list."
+    targetProjectChangedWarning: "Existing bindings remain in their original Dida lists; only new tasks use the newly selected list.",
+    syncStatusTitle: "Sync status",
+    syncNow: "Sync now",
+    statusLastFinished: "Last finished",
+    statusStatePending: "Pending",
+    statusStateSyncing: "Syncing…",
+    statusStateSuccess: "Synced",
+    statusStateFailed: "Failed",
+    statusCountScanned: "Scanned {count}",
+    statusCountCreated: "Created {count}",
+    statusCountRecovered: "Recovered {count}",
+    statusCountUpdated: "Updated {count}",
+    statusCountCompleted: "Completed {count}",
+    statusCountWrittenBack: "Written back {count}",
+    statusCountSkipped: "Skipped {count}",
+    statusCountFailed: "Failed {count}"
   },
   "zh-CN": {
     saveSettings: "保存设置",
@@ -138,6 +154,7 @@ const translations = {
     settingsTitle: "滴答同步设置",
     statusSynced: "滴答：{time} 已同步",
     statusFailed: "滴答：{time} 同步失败",
+    statusSyncing: "滴答：正在同步…",
     syncFailed: "滴答同步失败：{message}",
     connectionAndSync: "连接与同步",
     deviceDiscovery: "每台设备会自动发现本机 dida，也可以手动指定命令或绝对路径。",
@@ -199,7 +216,22 @@ const translations = {
     rangeValidationMissingTarget: "同步范围 {range} 缺少滴答清单。",
     rangeValidationDuplicateId: "同步范围 {firstRange} 和 {secondRange} 使用了相同的内部 ID。",
     rangeValidationOverlap: "同步范围 {firstRange} 和 {secondRange} 存在重叠。",
-    targetProjectChangedWarning: "已有绑定仍保留在原滴答清单中；只有新同步的任务会使用新选择的清单。"
+    targetProjectChangedWarning: "已有绑定仍保留在原滴答清单中；只有新同步的任务会使用新选择的清单。",
+    syncStatusTitle: "同步状态",
+    syncNow: "立即同步",
+    statusLastFinished: "上次完成",
+    statusStatePending: "等待同步",
+    statusStateSyncing: "正在同步…",
+    statusStateSuccess: "同步成功",
+    statusStateFailed: "同步失败",
+    statusCountScanned: "扫描 {count}",
+    statusCountCreated: "新增 {count}",
+    statusCountRecovered: "恢复 {count}",
+    statusCountUpdated: "更新 {count}",
+    statusCountCompleted: "完成 {count}",
+    statusCountWrittenBack: "回写 {count}",
+    statusCountSkipped: "跳过 {count}",
+    statusCountFailed: "失败 {count}"
   }
 } as const;
 

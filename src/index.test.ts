@@ -8,23 +8,30 @@ const pluginMocks = vi.hoisted(() => ({
   loadedSettings: undefined as PluginSettings | undefined,
   commandCallback: undefined as (() => void) | undefined,
   panelOnSave: undefined as SettingsPanelOptions["onSave"] | undefined,
+  panelOptions: undefined as SettingsPanelOptions | undefined,
+  panelDestroy: vi.fn(),
+  dialogDestroy: undefined as (() => void) | undefined,
   topBarButton: undefined as HTMLElement | undefined,
+  addTopBar: vi.fn(),
   showMessage: vi.fn(),
   saveConfiguration: vi.fn(async (_settings: PluginSettings) => undefined),
   saveRuntime: vi.fn(async (_settings: PluginSettings) => undefined),
+  recordSync: vi.fn(async () => []),
   engineSync: vi.fn(async () => undefined)
 }));
 
 vi.mock("siyuan", () => ({
   Dialog: class {
-    constructor(options: { content: string }) {
+    constructor(options: { content: string; destroyCallback?: () => void }) {
       const content = document.createElement("div");
       content.innerHTML = options.content;
       document.body.append(content);
+      pluginMocks.dialogDestroy = options.destroyCallback;
     }
   },
   Plugin: class {
     addTopBar(options: { callback(): void }) {
+      pluginMocks.addTopBar(options);
       pluginMocks.topBarButton = document.createElement("button");
       pluginMocks.topBarButton.addEventListener("click", options.callback);
       return pluginMocks.topBarButton;
@@ -40,7 +47,9 @@ vi.mock("siyuan", () => ({
 vi.mock("./settings/settingsPanel", () => ({
   buildSettingsPanel: (options: SettingsPanelOptions) => {
     pluginMocks.panelOnSave = options.onSave;
-    return document.createElement("div");
+    pluginMocks.panelOptions = options;
+    const element = document.createElement("div");
+    return { element, destroy: pluginMocks.panelDestroy };
   }
 }));
 
@@ -49,7 +58,7 @@ vi.mock("./settings/workspaceStorage", () => ({
     initialize = async () => pluginMocks.loadedSettings!;
     saveConfiguration = pluginMocks.saveConfiguration;
     saveRuntime = pluginMocks.saveRuntime;
-    recordSync = vi.fn(async () => []);
+    recordSync = pluginMocks.recordSync;
     clearLogs = vi.fn(async () => undefined);
   }
 }));
@@ -127,6 +136,8 @@ describe("loaded sync-range safety gate", () => {
     vi.clearAllMocks();
     pluginMocks.commandCallback = undefined;
     pluginMocks.panelOnSave = undefined;
+    pluginMocks.panelOptions = undefined;
+    pluginMocks.dialogDestroy = undefined;
     pluginMocks.topBarButton = undefined;
     document.body.replaceChildren();
     Object.defineProperty(window, "siyuan", {
@@ -149,6 +160,7 @@ describe("loaded sync-range safety gate", () => {
       const plugin = new SiyuanDidaPlugin({} as never);
 
       await plugin.onload();
+      plugin.onLayoutReady();
 
       expect(intervalSpy).not.toHaveBeenCalled();
       expect(timeoutSpy).not.toHaveBeenCalled();
@@ -168,6 +180,13 @@ describe("loaded sync-range safety gate", () => {
         7000,
         "error"
       );
+
+      await openSettings(plugin);
+      const states: string[] = [];
+      pluginMocks.panelOptions!.status.subscribe((snapshot) => states.push(snapshot.state));
+      await pluginMocks.panelOptions!.onSyncNow();
+      expect(states).not.toContain("syncing");
+      expect(pluginMocks.engineSync).not.toHaveBeenCalled();
     }
   );
 
@@ -282,6 +301,7 @@ describe("loaded sync-range safety gate", () => {
     } as never);
     const plugin = new SiyuanDidaPlugin({} as never);
     await plugin.onload();
+    plugin.onLayoutReady();
 
     pluginMocks.topBarButton?.click();
     await flushPromises();
@@ -290,5 +310,180 @@ describe("loaded sync-range safety gate", () => {
     expect(pluginMocks.showMessage).toHaveBeenCalledWith(
       "Dida sync complete: scanned 7, created 2, recovered 1, updated 3, completed 4, written back 5, skipped 6, failed 0"
     );
+  });
+});
+
+describe("sync status and plugin lifecycle", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    pluginMocks.commandCallback = undefined;
+    pluginMocks.panelOnSave = undefined;
+    pluginMocks.panelOptions = undefined;
+    pluginMocks.dialogDestroy = undefined;
+    pluginMocks.topBarButton = undefined;
+    document.body.replaceChildren();
+    Object.defineProperty(window, "siyuan", {
+      configurable: true,
+      value: {
+        config: {
+          lang: "en",
+          system: { confDir: "/conf", workspaceDir: "/workspace" }
+        }
+      }
+    });
+    const valid = loadedSettings("overlap");
+    valid.autoSync = false;
+    valid.syncOnStartup = false;
+    valid.ranges = valid.ranges.slice(0, 1);
+    pluginMocks.loadedSettings = valid;
+  });
+
+  test("creates the top-bar action only when layout is ready", async () => {
+    const plugin = new SiyuanDidaPlugin({} as never);
+    await plugin.onload();
+
+    expect(pluginMocks.addTopBar).not.toHaveBeenCalled();
+    plugin.onLayoutReady();
+    expect(pluginMocks.addTopBar).toHaveBeenCalledOnce();
+    expect(pluginMocks.topBarButton?.getAttribute("aria-label")).toBe("Dida: pending sync");
+  });
+
+  test.each([
+    [0, "success"],
+    [2, "failed"]
+  ] as const)("initializes from the latest stored log with %i failures", async (failed, expectedState) => {
+    pluginMocks.loadedSettings!.logs = [{
+      created: 1,
+      updated: 0,
+      completed: 0,
+      writtenBack: 0,
+      failed,
+      skipped: 0,
+      scanned: 1,
+      rangeResults: [],
+      rangeCursorOffsets: {},
+      events: [],
+      failures: [],
+      startedAt: "2026-08-20T01:02:02.000Z",
+      finishedAt: "2026-08-20T01:02:03.000Z"
+    }];
+    const plugin = new SiyuanDidaPlugin({} as never);
+    await plugin.onload();
+    plugin.onLayoutReady();
+    plugin.openSetting();
+    await new Promise((resolve) => window.setTimeout(resolve, 0));
+
+    expect(pluginMocks.panelOptions!.status.getSnapshot()).toMatchObject({
+      state: expectedState,
+      lastFinishedAt: "2026-08-20T01:02:03.000Z"
+    });
+    expect(pluginMocks.panelOptions!.status.getSnapshot().latestResult?.recovered ?? 0).toBe(0);
+
+    plugin.onLayoutReady();
+    expect(pluginMocks.topBarButton?.getAttribute("aria-label")).toContain(failed ? "sync failed" : "synced");
+  });
+
+  test("publishes syncing then a completed result and uses the same manual entry", async () => {
+    let resolveSync!: (result: undefined) => void;
+    pluginMocks.engineSync.mockImplementationOnce(() => new Promise<undefined>((resolve) => { resolveSync = resolve; }));
+    const plugin = new SiyuanDidaPlugin({} as never);
+    await plugin.onload();
+    plugin.onLayoutReady();
+    plugin.openSetting();
+    await new Promise((resolve) => window.setTimeout(resolve, 0));
+
+    const transitions: string[] = [];
+    pluginMocks.panelOptions!.status.subscribe((snapshot) => transitions.push(snapshot.state));
+    const run = pluginMocks.panelOptions!.onSyncNow();
+    await flushPromises();
+    expect(transitions.at(-1)).toBe("syncing");
+    expect(pluginMocks.topBarButton?.getAttribute("aria-label")).toBe("Dida: syncing…");
+    await pluginMocks.panelOptions!.onSyncNow();
+    expect(pluginMocks.engineSync).toHaveBeenCalledOnce();
+    expect(pluginMocks.showMessage).toHaveBeenCalledWith(
+      "Dida sync is already running; skipped this trigger"
+    );
+
+    resolveSync({
+      created: 0, recovered: 1, updated: 0, completed: 0, writtenBack: 0,
+      failed: 0, skipped: 0, scanned: 1, rangeResults: [],
+      rangeCursorOffsets: { "range-1": 0 }, events: [], failures: [],
+      startedAt: "2026-08-20T01:02:02.000Z", finishedAt: "2026-08-20T01:02:03.000Z"
+    } as never);
+    await run;
+
+    expect(transitions.at(-1)).toBe("success");
+    expect(pluginMocks.panelOptions!.status.getSnapshot().latestResult?.recovered).toBe(1);
+    expect(pluginMocks.topBarButton?.getAttribute("aria-label")).toContain("synced");
+  });
+
+  test("publishes caught errors while silent sync suppresses messages", async () => {
+    pluginMocks.engineSync.mockRejectedValueOnce(new Error("offline"));
+    const plugin = new SiyuanDidaPlugin({} as never);
+    await plugin.onload();
+    plugin.openSetting();
+    await new Promise((resolve) => window.setTimeout(resolve, 0));
+
+    await (plugin as unknown as { runSync(options: { silentSkip: boolean }): Promise<void> })
+      .runSync({ silentSkip: true });
+    expect(pluginMocks.panelOptions!.status.getSnapshot()).toMatchObject({
+      state: "failed",
+      message: "offline",
+      latestResult: { failed: 1 }
+    });
+    expect(pluginMocks.showMessage).not.toHaveBeenCalled();
+  });
+
+  test("publishes a failed result even when persisting the error log also fails", async () => {
+    pluginMocks.engineSync.mockRejectedValueOnce(new Error("offline"));
+    pluginMocks.recordSync.mockRejectedValue(new Error("log unavailable"));
+    const plugin = new SiyuanDidaPlugin({} as never);
+    await plugin.onload();
+    plugin.openSetting();
+    await new Promise((resolve) => window.setTimeout(resolve, 0));
+
+    await expect(pluginMocks.panelOptions!.onSyncNow()).resolves.toBeUndefined();
+    expect(pluginMocks.panelOptions!.status.getSnapshot()).toMatchObject({
+      state: "failed",
+      message: "offline",
+      latestResult: { failed: 1 }
+    });
+  });
+
+  test("clears tracked timers, destroys the dialog view, and ignores work after unload", async () => {
+    pluginMocks.loadedSettings!.autoSync = true;
+    pluginMocks.loadedSettings!.syncOnStartup = true;
+    const clearTimeoutSpy = vi.spyOn(window, "clearTimeout");
+    const clearIntervalSpy = vi.spyOn(window, "clearInterval");
+    const plugin = new SiyuanDidaPlugin({} as never);
+    await plugin.onload();
+    plugin.openSetting();
+    await new Promise((resolve) => window.setTimeout(resolve, 0));
+
+    plugin.onunload();
+    expect(clearTimeoutSpy).toHaveBeenCalled();
+    expect(clearIntervalSpy).toHaveBeenCalled();
+
+    pluginMocks.dialogDestroy?.();
+    expect(pluginMocks.panelDestroy).toHaveBeenCalledOnce();
+
+    plugin.onLayoutReady();
+    pluginMocks.commandCallback?.();
+    await flushPromises();
+    expect(pluginMocks.addTopBar).not.toHaveBeenCalled();
+    expect(pluginMocks.engineSync).not.toHaveBeenCalled();
+  });
+
+  test("cancels a pending settings mount when unloaded", async () => {
+    const clearTimeoutSpy = vi.spyOn(window, "clearTimeout");
+    const plugin = new SiyuanDidaPlugin({} as never);
+    await plugin.onload();
+
+    plugin.openSetting();
+    plugin.onunload();
+    await new Promise((resolve) => window.setTimeout(resolve, 0));
+
+    expect(clearTimeoutSpy).toHaveBeenCalled();
+    expect(pluginMocks.panelOptions).toBeUndefined();
   });
 });

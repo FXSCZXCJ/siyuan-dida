@@ -12,15 +12,23 @@ import {
   prepareRangesForSave
 } from "./ranges";
 import type { Translate } from "../i18n";
+import { buildStatusPanel, type SyncStatusController } from "./statusPanel";
 
 export interface SettingsPanelOptions {
   settings: PluginSettings;
   t: Translate;
+  status: SyncStatusController;
+  onSyncNow(): void | Promise<void>;
   onSave(settings: PluginSettings): Promise<PluginSettings>;
   onClearLogs(): Promise<void>;
 }
 
-export function buildSettingsPanel(options: SettingsPanelOptions): HTMLElement {
+export interface SettingsPanelView {
+  element: HTMLElement;
+  destroy(): void;
+}
+
+export function buildSettingsPanel(options: SettingsPanelOptions): SettingsPanelView {
   const { t } = options;
   const ranges = options.settings.ranges.length > 0
     ? options.settings.ranges.map((range) => ({ ...range }))
@@ -110,6 +118,14 @@ export function buildSettingsPanel(options: SettingsPanelOptions): HTMLElement {
       <pre class="dida-sync-log" data-field="logs"></pre>
     </section>
   `;
+
+  const statusView = buildStatusPanel({
+    status: options.status,
+    t,
+    locale: window.siyuan?.config?.lang ?? navigator.language,
+    onSyncNow: options.onSyncNow
+  });
+  root.querySelector(".dida-sync-summary")!.after(statusView.element);
 
   const cliCommand = root.querySelector<HTMLInputElement>('[data-field="cliCommand"]')!;
   const autoSync = root.querySelector<HTMLInputElement>('[data-field="autoSync"]')!;
@@ -244,7 +260,10 @@ export function buildSettingsPanel(options: SettingsPanelOptions): HTMLElement {
     })
     .catch(() => undefined);
 
-  return root;
+  return {
+    element: root,
+    destroy: statusView.destroy
+  };
 }
 
 function renderRange(

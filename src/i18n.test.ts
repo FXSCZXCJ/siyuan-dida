@@ -39,4 +39,12 @@ describe("createTranslator", () => {
       })
     ).toBe("已保存的同步范围无效：同步范围 1 和 2 存在重叠。请先在插件设置中修正并保存，然后再同步。");
   });
+
+  test("provides every status-panel label and counter in English and Chinese", () => {
+    expect(createTranslator("en")("statusStateSyncing")).toBe("Syncing…");
+    expect(createTranslator("en")("statusCountRecovered", { count: 2 })).toBe("Recovered 2");
+    expect(createTranslator("zh-CN")("syncStatusTitle")).toBe("同步状态");
+    expect(createTranslator("zh-CN")("statusStateFailed")).toBe("同步失败");
+    expect(createTranslator("zh-CN")("statusCountWrittenBack", { count: 3 })).toBe("回写 3");
+  });
 });
