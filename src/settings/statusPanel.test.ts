@@ -48,6 +48,35 @@ describe("sync status controller", () => {
     controller.publish({ state: "failed", message: "offline" });
     expect(subscriber).toHaveBeenCalledTimes(2);
   });
+
+  test("isolates throwing subscribers so later subscribers still receive updates", () => {
+    const controller = createSyncStatusController({ state: "pending" });
+    controller.subscribe((snapshot) => {
+      if (snapshot.state === "syncing") throw new Error("subscriber failed");
+    });
+    const laterSubscriber = vi.fn();
+    controller.subscribe(laterSubscriber);
+
+    expect(() => controller.publish({ state: "syncing" })).not.toThrow();
+    expect(laterSubscriber).toHaveBeenLastCalledWith({ state: "syncing" });
+  });
+
+  test("uses a stable subscriber snapshot during reentrant unsubscribe", () => {
+    const controller = createSyncStatusController({ state: "pending" });
+    let unsubscribeLater: () => void = () => undefined;
+    controller.subscribe((snapshot) => {
+      if (snapshot.state === "syncing") unsubscribeLater();
+    });
+    const laterSubscriber = vi.fn();
+    unsubscribeLater = controller.subscribe(laterSubscriber);
+    laterSubscriber.mockClear();
+
+    controller.publish({ state: "syncing" });
+
+    expect(laterSubscriber).toHaveBeenCalledOnce();
+    controller.publish({ state: "success" });
+    expect(laterSubscriber).toHaveBeenCalledOnce();
+  });
 });
 
 describe("buildStatusPanel", () => {
@@ -140,5 +169,19 @@ describe("buildStatusPanel", () => {
     expect(statusText(view.element)).toContain("Pending");
     expect(view.element.textContent).not.toContain("late failure");
     expect(onSyncNow).not.toHaveBeenCalled();
+  });
+
+  test("announces a failure message through a live region", () => {
+    const controller = createSyncStatusController({ state: "failed", message: "offline" });
+    const view = buildStatusPanel({
+      status: controller,
+      t: createTranslator("en"),
+      onSyncNow: vi.fn()
+    });
+    const message = view.element.querySelector<HTMLElement>('[data-field="statusMessage"]')!;
+    const liveRegion = message.closest<HTMLElement>('[aria-live]');
+
+    expect(liveRegion).not.toBeNull();
+    expect(liveRegion?.getAttribute("aria-live")).toBe("polite");
   });
 });

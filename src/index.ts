@@ -33,6 +33,8 @@ export default class SiyuanDidaPlugin extends Plugin {
   private startupTimer: number | undefined;
   private settingsMountTimers = new Set<number>();
   private settingsViews = new Set<{ destroy(): void }>();
+  private settingsDialogs = new Set<Dialog>();
+  private operationTail: Promise<void> = Promise.resolve();
   private syncRunning = false;
   private syncButton: HTMLElement | undefined;
   private t!: Translate;
@@ -60,7 +62,9 @@ export default class SiyuanDidaPlugin extends Plugin {
     const prepared = prepareLoadedSettings(loadedSettings);
     this.settings = prepared.settings;
     this.rangeConfigurationError = prepared.error;
-    const initialStatus = statusFromLatestLog(this.settings.logs[0]);
+    const initialStatus = this.rangeConfigurationError
+      ? this.invalidConfigurationStatus(this.rangeConfigurationError)
+      : statusFromLatestLog(this.settings.logs[0]);
     this.status = createSyncStatusController(initialStatus);
     this.statusTooltip = this.rangeConfigurationError
       ? this.t("configurationInvalidStatus")
@@ -106,6 +110,10 @@ export default class SiyuanDidaPlugin extends Plugin {
     }
     this.settingsMountTimers.forEach((timer) => window.clearTimeout(timer));
     this.settingsMountTimers.clear();
+    for (const dialog of [...this.settingsDialogs]) {
+      dialog.destroy();
+    }
+    this.settingsDialogs.clear();
     this.settingsViews.forEach((view) => view.destroy());
     this.settingsViews.clear();
   }
@@ -115,11 +123,13 @@ export default class SiyuanDidaPlugin extends Plugin {
     const mountId = `dida-sync-settings-${Date.now()}`;
     let view: ReturnType<typeof buildSettingsPanel> | undefined;
     let mountTimer: number | undefined;
-    new Dialog({
+    let dialog!: Dialog;
+    dialog = new Dialog({
       title: this.t("settingsTitle"),
       content: `<div id="${mountId}"></div>`,
       width: "760px",
       destroyCallback: () => {
+        this.settingsDialogs.delete(dialog);
         if (mountTimer !== undefined) {
           window.clearTimeout(mountTimer);
           this.settingsMountTimers.delete(mountTimer);
@@ -133,6 +143,7 @@ export default class SiyuanDidaPlugin extends Plugin {
         }
       }
     });
+    this.settingsDialogs.add(dialog);
 
     mountTimer = window.setTimeout(() => {
       const currentTimer = mountTimer;
@@ -148,29 +159,30 @@ export default class SiyuanDidaPlugin extends Plugin {
         t: this.t,
         status: this.status,
         onSyncNow: () => this.runSync(),
-        onSave: async (settings) => {
+        onSave: (settings) => this.enqueueOperation(async () => {
+          if (this.unloaded) return this.settings;
           const previousSettings = this.settings;
+          const previousConfigurationError = this.rangeConfigurationError;
           const reconciled = reconcileSettingsForSave(previousSettings, normalizeSettings(settings));
           const prepared = prepareLoadedSettings(reconciled);
           await this.persistSettings(prepared.settings, previousSettings);
+          if (this.unloaded) return this.settings;
           this.settings = prepared.settings;
           this.rangeConfigurationError = prepared.error;
           this.resetTimer();
           if (this.rangeConfigurationError) {
-            this.updateStatus(this.t("configurationInvalidStatus"));
-          } else {
-            this.publishStatus({
-              ...this.status.getSnapshot(),
-              state: "pending",
-              message: undefined
-            });
+            this.publishStatus(this.invalidConfigurationStatus(this.rangeConfigurationError));
+          } else if (previousConfigurationError) {
+            this.publishStatus({ state: "pending" });
           }
           return this.settings;
-        },
-        onClearLogs: async () => {
+        }),
+        onClearLogs: () => this.enqueueOperation(async () => {
+          if (this.unloaded) return;
           await this.storage.clearLogs();
+          if (this.unloaded) return;
           this.settings.logs = [];
-        }
+        })
       });
       this.settingsViews.add(view);
       mount.appendChild(view.element);
@@ -213,7 +225,7 @@ export default class SiyuanDidaPlugin extends Plugin {
   private async runSync(options: { silentSkip?: boolean } = {}) {
     if (this.unloaded) return;
     if (this.rangeConfigurationError) {
-      this.updateStatus(this.t("configurationInvalidStatus"));
+      this.publishStatus(this.invalidConfigurationStatus(this.rangeConfigurationError));
       if (!options.silentSkip) {
         showMessage(
           this.t("configurationInvalidSyncBlocked", {
@@ -239,12 +251,21 @@ export default class SiyuanDidaPlugin extends Plugin {
     }
 
     this.syncRunning = true;
-    this.publishStatus({
-      ...this.status.getSnapshot(),
-      state: "syncing",
-      message: undefined
-    });
     try {
+      this.publishStatus({
+        ...this.status.getSnapshot(),
+        state: "syncing",
+        message: undefined
+      });
+      await this.enqueueOperation(() => this.executeSync(options));
+    } finally {
+      this.syncRunning = false;
+    }
+  }
+
+  private async executeSync(options: { silentSkip?: boolean }) {
+    try {
+      if (this.unloaded) return;
       const resolved = await resolveDidaCommand(getResolvedCliPathForCurrentDevice(this.settings) || this.settings.cliCommand || "dida");
       if (this.unloaded) return;
       this.settings = withResolvedCliPathForCurrentDevice(this.settings, resolved.command);
@@ -289,9 +310,13 @@ export default class SiyuanDidaPlugin extends Plugin {
       if (!options.silentSkip) {
         showMessage(this.t("syncFailed", { message: (error as Error).message }), 7000, "error");
       }
-    } finally {
-      this.syncRunning = false;
     }
+  }
+
+  private enqueueOperation<T>(operation: () => Promise<T>): Promise<T> {
+    const result = this.operationTail.then(operation, operation);
+    this.operationTail = result.then(() => undefined, () => undefined);
+    return result;
   }
 
   private updateStatus(text: string) {
@@ -308,12 +333,24 @@ export default class SiyuanDidaPlugin extends Plugin {
   }
 
   private tooltipForStatus(snapshot: SyncStatusSnapshot): string {
+    if (this.rangeConfigurationError && snapshot.state === "failed") {
+      return this.t("configurationInvalidStatus");
+    }
     if (snapshot.state === "syncing") return this.t("statusSyncing");
     if (snapshot.state === "pending" || !snapshot.lastFinishedAt) return this.t("syncPending");
     const time = new Date(snapshot.lastFinishedAt).toLocaleTimeString();
     return snapshot.state === "failed"
       ? this.t("statusFailed", { time })
       : this.t("statusSynced", { time });
+  }
+
+  private invalidConfigurationStatus(error: RangeValidationError): SyncStatusSnapshot {
+    return {
+      state: "failed",
+      message: this.t("configurationInvalidSyncBlocked", {
+        message: getRangeValidationMessage(error, this.t)
+      })
+    };
   }
 
 }

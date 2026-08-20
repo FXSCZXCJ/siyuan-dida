@@ -11,6 +11,7 @@ const pluginMocks = vi.hoisted(() => ({
   panelOptions: undefined as SettingsPanelOptions | undefined,
   panelDestroy: vi.fn(),
   dialogDestroy: undefined as (() => void) | undefined,
+  dialogDestroyMethod: vi.fn(),
   topBarButton: undefined as HTMLElement | undefined,
   addTopBar: vi.fn(),
   showMessage: vi.fn(),
@@ -24,11 +25,19 @@ const pluginMocks = vi.hoisted(() => ({
 
 vi.mock("siyuan", () => ({
   Dialog: class {
+    private readonly destroyCallback?: () => void;
+
     constructor(options: { content: string; destroyCallback?: () => void }) {
       const content = document.createElement("div");
       content.innerHTML = options.content;
       document.body.append(content);
       pluginMocks.dialogDestroy = options.destroyCallback;
+      this.destroyCallback = options.destroyCallback;
+    }
+
+    destroy() {
+      pluginMocks.dialogDestroyMethod();
+      this.destroyCallback?.();
     }
   },
   Plugin: class {
@@ -125,6 +134,25 @@ function loadedSettingsWithMissingField(
   };
 }
 
+function syncResult(cursorOffset: number) {
+  return {
+    created: 0,
+    recovered: 0,
+    updated: 0,
+    completed: 0,
+    writtenBack: 0,
+    failed: 0,
+    skipped: 0,
+    scanned: 1,
+    rangeResults: [],
+    rangeCursorOffsets: { "range-1": cursorOffset },
+    events: [],
+    failures: [],
+    startedAt: "2026-08-20T01:02:02.000Z",
+    finishedAt: "2026-08-20T01:02:03.000Z"
+  };
+}
+
 async function flushPromises() {
   await Promise.resolve();
   await Promise.resolve();
@@ -187,10 +215,15 @@ describe("loaded sync-range safety gate", () => {
       );
 
       await openSettings(plugin);
+      expect(pluginMocks.panelOptions!.status.getSnapshot()).toMatchObject({
+        state: "failed",
+        message: expect.stringContaining("Saved sync ranges are invalid")
+      });
       const states: string[] = [];
       pluginMocks.panelOptions!.status.subscribe((snapshot) => states.push(snapshot.state));
       await pluginMocks.panelOptions!.onSyncNow();
       expect(states).not.toContain("syncing");
+      expect(states.at(-1)).toBe("failed");
       expect(pluginMocks.engineSync).not.toHaveBeenCalled();
     }
   );
@@ -258,6 +291,11 @@ describe("loaded sync-range safety gate", () => {
 
       await expect(pluginMocks.panelOnSave!(validCandidate)).rejects.toThrow(saveError.message);
 
+      expect(pluginMocks.panelOptions!.status.getSnapshot()).toMatchObject({
+        state: "failed",
+        message: expect.stringContaining("Saved sync ranges are invalid")
+      });
+
       const liveSettings = (plugin as unknown as { settings: PluginSettings }).settings;
       expect(liveSettings).toBe(previousSettings);
       expect(liveSettings).toMatchObject({ autoSync: false, syncOnStartup: false });
@@ -315,6 +353,48 @@ describe("loaded sync-range safety gate", () => {
     expect(pluginMocks.showMessage).toHaveBeenCalledWith(
       "Dida sync complete: scanned 7, created 2, recovered 1, updated 3, completed 4, written back 5, skipped 6, failed 0"
     );
+  });
+
+  test("publishes pending only after a valid save corrects an invalid configuration", async () => {
+    pluginMocks.loadedSettings = loadedSettingsWithMissingField("notebookId");
+    const plugin = new SiyuanDidaPlugin({} as never);
+    await plugin.onload();
+    await openSettings(plugin);
+    const previous = (plugin as unknown as { settings: PluginSettings }).settings;
+    const validCandidate: PluginSettings = {
+      ...previous,
+      ranges: previous.ranges.map((range) => ({ ...range, notebookId: "box-1" }))
+    };
+    let finishSave!: () => void;
+    pluginMocks.saveConfiguration.mockImplementationOnce(
+      () => new Promise<undefined>((resolve) => { finishSave = () => resolve(undefined); })
+    );
+
+    expect(pluginMocks.panelOptions!.status.getSnapshot().state).toBe("failed");
+    const save = pluginMocks.panelOnSave!(validCandidate);
+    await flushPromises();
+    expect(pluginMocks.panelOptions!.status.getSnapshot().state).toBe("failed");
+
+    finishSave();
+    await save;
+    expect(pluginMocks.panelOptions!.status.getSnapshot()).toEqual({ state: "pending" });
+  });
+
+  test("invalid loaded configuration overrides a previously successful log status", async () => {
+    const invalid = loadedSettingsWithMissingField("notebookId");
+    invalid.logs = [syncResult(0)];
+    pluginMocks.loadedSettings = invalid;
+    const plugin = new SiyuanDidaPlugin({} as never);
+
+    await plugin.onload();
+    await openSettings(plugin);
+
+    const snapshot = pluginMocks.panelOptions!.status.getSnapshot();
+    expect(snapshot).toMatchObject({
+      state: "failed",
+      message: expect.stringContaining("missing a notebook")
+    });
+    expect(snapshot).not.toHaveProperty("latestResult");
   });
 });
 
@@ -441,7 +521,7 @@ describe("sync status and plugin lifecycle", () => {
 
   test("publishes a failed result even when persisting the error log also fails", async () => {
     pluginMocks.engineSync.mockRejectedValueOnce(new Error("offline"));
-    pluginMocks.recordSync.mockRejectedValue(new Error("log unavailable"));
+    pluginMocks.recordSync.mockRejectedValueOnce(new Error("log unavailable"));
     const plugin = new SiyuanDidaPlugin({} as never);
     await plugin.onload();
     plugin.openSetting();
@@ -492,6 +572,31 @@ describe("sync status and plugin lifecycle", () => {
     expect(pluginMocks.panelOptions).toBeUndefined();
   });
 
+  test("destroys retained settings dialogs during unload", async () => {
+    const plugin = new SiyuanDidaPlugin({} as never);
+    await plugin.onload();
+    plugin.openSetting();
+    await new Promise((resolve) => window.setTimeout(resolve, 0));
+
+    plugin.onunload();
+
+    expect(pluginMocks.dialogDestroyMethod).toHaveBeenCalledOnce();
+    expect(pluginMocks.panelDestroy).toHaveBeenCalledOnce();
+  });
+
+  test("removes a dialog from unload tracking when its destroy callback runs", async () => {
+    const plugin = new SiyuanDidaPlugin({} as never);
+    await plugin.onload();
+    plugin.openSetting();
+    await new Promise((resolve) => window.setTimeout(resolve, 0));
+
+    pluginMocks.dialogDestroy?.();
+    plugin.onunload();
+
+    expect(pluginMocks.panelDestroy).toHaveBeenCalledOnce();
+    expect(pluginMocks.dialogDestroyMethod).not.toHaveBeenCalled();
+  });
+
   test("stops after deferred CLI discovery resolves when unloaded", async () => {
     let resolveCommand!: (value: { command: string; version: string }) => void;
     pluginMocks.resolveDidaCommand.mockImplementationOnce(
@@ -516,6 +621,87 @@ describe("sync status and plugin lifecycle", () => {
     expect(pluginMocks.engineSync).not.toHaveBeenCalled();
     expect(pluginMocks.recordSync).not.toHaveBeenCalled();
     expect(status.getSnapshot()).toBe(snapshotAtUnload);
+    expect((plugin as unknown as { syncRunning: boolean }).syncRunning).toBe(false);
+  });
+
+  test("waits for a settings save before syncing the saved configuration", async () => {
+    let finishConfigurationSave!: () => void;
+    pluginMocks.saveConfiguration.mockImplementationOnce(
+      () => new Promise<undefined>((resolve) => { finishConfigurationSave = () => resolve(undefined); })
+    );
+    pluginMocks.engineSync.mockResolvedValueOnce(syncResult(11) as never);
+    const plugin = new SiyuanDidaPlugin({} as never);
+    await plugin.onload();
+    await openSettings(plugin);
+    const current = (plugin as unknown as { settings: PluginSettings }).settings;
+    const submitted: PluginSettings = {
+      ...current,
+      cliCommand: "saved-dida",
+      ranges: current.ranges.map((range) => ({ ...range, name: "Saved range" }))
+    };
+
+    const save = pluginMocks.panelOnSave!(submitted);
+    await flushPromises();
+    const sync = pluginMocks.panelOptions!.onSyncNow();
+    await flushPromises();
+
+    expect(pluginMocks.engineConstructor).not.toHaveBeenCalled();
+    finishConfigurationSave();
+    await save;
+    await sync;
+
+    const finalSettings = (plugin as unknown as { settings: PluginSettings }).settings;
+    expect(finalSettings.cliCommand).toBe("saved-dida");
+    expect(finalSettings.ranges[0]).toMatchObject({ name: "Saved range", cursorOffset: 11 });
+    expect(pluginMocks.panelOptions!.status.getSnapshot().state).toBe("success");
+  });
+
+  test("waits for sync persistence before saving while preserving the latest cursor and status", async () => {
+    let finishSync!: (result: never) => void;
+    pluginMocks.engineSync.mockImplementationOnce(
+      () => new Promise<never>((resolve) => { finishSync = resolve; })
+    );
+    const plugin = new SiyuanDidaPlugin({} as never);
+    await plugin.onload();
+    await openSettings(plugin);
+    const sync = pluginMocks.panelOptions!.onSyncNow();
+    await flushPromises();
+    expect(pluginMocks.engineSync).toHaveBeenCalledOnce();
+
+    const current = (plugin as unknown as { settings: PluginSettings }).settings;
+    const submitted: PluginSettings = {
+      ...current,
+      ranges: current.ranges.map((range) => ({ ...range, name: "Saved after sync" }))
+    };
+    const save = pluginMocks.panelOnSave!(submitted);
+    await flushPromises();
+    expect(pluginMocks.saveConfiguration).not.toHaveBeenCalled();
+
+    finishSync(syncResult(17) as never);
+    await sync;
+    await save;
+
+    const finalSettings = (plugin as unknown as { settings: PluginSettings }).settings;
+    expect(finalSettings.ranges[0]).toMatchObject({ name: "Saved after sync", cursorOffset: 17 });
+    expect(pluginMocks.panelOptions!.status.getSnapshot().state).toBe("success");
+  });
+
+  test("completes sync and resets the running flag when a status subscriber throws", async () => {
+    pluginMocks.engineSync.mockResolvedValueOnce(syncResult(4) as never);
+    const plugin = new SiyuanDidaPlugin({} as never);
+    await plugin.onload();
+    await openSettings(plugin);
+    const status = pluginMocks.panelOptions!.status;
+    status.subscribe((snapshot) => {
+      if (snapshot.state === "syncing") throw new Error("view failed");
+    });
+    const laterSubscriber = vi.fn();
+    status.subscribe(laterSubscriber);
+
+    await expect(pluginMocks.panelOptions!.onSyncNow()).resolves.toBeUndefined();
+
+    expect(pluginMocks.engineSync).toHaveBeenCalledOnce();
+    expect(laterSubscriber).toHaveBeenLastCalledWith(expect.objectContaining({ state: "success" }));
     expect((plugin as unknown as { syncRunning: boolean }).syncRunning).toBe(false);
   });
 });

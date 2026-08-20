@@ -23,11 +23,21 @@ export function createSyncStatusController(initial: SyncStatusSnapshot): SyncSta
     getSnapshot: () => snapshot,
     publish(next) {
       snapshot = next;
-      subscribers.forEach((subscriber) => subscriber(snapshot));
+      for (const subscriber of [...subscribers]) {
+        try {
+          subscriber(snapshot);
+        } catch {
+          // One settings view must not prevent other status consumers from updating.
+        }
+      }
     },
     subscribe(subscriber) {
       subscribers.add(subscriber);
-      subscriber(snapshot);
+      try {
+        subscriber(snapshot);
+      } catch {
+        // Subscriber failures are isolated from plugin lifecycle and sync execution.
+      }
       return () => subscribers.delete(subscriber);
     }
   };
@@ -60,11 +70,13 @@ export function buildStatusPanel(options: StatusPanelOptions): StatusPanelView {
   const root = document.createElement("section");
   root.className = "dida-sync-status dida-sync-section";
   root.setAttribute("aria-label", options.t("syncStatusTitle"));
+  root.setAttribute("aria-live", "polite");
+  root.setAttribute("role", "status");
   root.innerHTML = `
     <div class="dida-sync-status__header">
       <div>
         <div class="dida-sync-section__title">${options.t("syncStatusTitle")}</div>
-        <div class="dida-sync-status__state" data-field="syncStatus" role="status" aria-live="polite"></div>
+        <div class="dida-sync-status__state" data-field="syncStatus"></div>
       </div>
       <button class="b3-button" data-action="syncNow" type="button">${options.t("syncNow")}</button>
     </div>

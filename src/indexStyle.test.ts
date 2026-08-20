@@ -17,6 +17,7 @@ describe("settings warning style", () => {
     expect(stylesheet).toContain("var(--b3-theme-surface)");
     expect(stylesheet).toContain(".dida-sync-status [data-action=\"syncNow\"]:focus-visible");
     expect(stylesheet).toContain(".dida-sync-status [data-action=\"syncNow\"]:disabled");
+    expect(stylesheet).toContain(".dida-sync-section.dida-sync-status");
     expect(stylesheet).toContain("@media (max-width: 720px)");
   });
 });

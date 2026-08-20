@@ -8,7 +8,8 @@ import { createSyncStatusController } from "./statusPanel";
 
 const panelMocks = vi.hoisted(() => ({
   notebooks: Promise.resolve([] as Array<{ id: string; name: string }>),
-  projects: Promise.resolve([] as Array<{ id: string; name: string }>)
+  projects: Promise.resolve([] as Array<{ id: string; name: string }>),
+  resolveDidaCommand: vi.fn(async () => ({ command: "dida", version: "test" }))
 }));
 
 vi.mock("../siyuan/api", () => ({
@@ -16,7 +17,7 @@ vi.mock("../siyuan/api", () => ({
 }));
 
 vi.mock("../dida/cli", () => ({
-  resolveDidaCommand: async () => ({ command: "dida", version: "test" }),
+  resolveDidaCommand: panelMocks.resolveDidaCommand,
   DidaCliClient: class {
     listProjects() {
       return panelMocks.projects;
@@ -135,6 +136,7 @@ async function flushAsyncRendering() {
 
 describe("buildSettingsPanel range target behavior", () => {
   beforeEach(() => {
+    panelMocks.resolveDidaCommand.mockClear();
     panelMocks.notebooks = new Promise(() => undefined);
     panelMocks.projects = new Promise(() => undefined);
   });
@@ -422,5 +424,62 @@ describe("buildSettingsPanel status integration", () => {
     view.destroy();
     status.publish({ state: "failed", message: "after destroy" });
     expect(view.element.textContent).not.toContain("after destroy");
+  });
+
+  test("destroy removes all handlers and clears the mounted content", async () => {
+    const onSave = vi.fn(async (savedSettings: PluginSettings) => savedSettings);
+    const onClearLogs = vi.fn(async () => undefined);
+    const onSyncNow = vi.fn();
+    const view = buildSettingsPanel({
+      settings: settings(),
+      t: createTranslator("en"),
+      status: createSyncStatusController({ state: "pending" }),
+      onSyncNow,
+      onSave,
+      onClearLogs
+    });
+    const save = view.element.querySelector<HTMLButtonElement>('[data-action="save"]')!;
+    const clear = view.element.querySelector<HTMLButtonElement>('[data-action="clearLogs"]')!;
+    const sync = view.element.querySelector<HTMLButtonElement>('[data-action="syncNow"]')!;
+    const testConnection = view.element.querySelector<HTMLButtonElement>('[data-action="test"]')!;
+    panelMocks.resolveDidaCommand.mockClear();
+
+    view.destroy();
+    save.click();
+    clear.click();
+    sync.click();
+    testConnection.click();
+    await flushAsyncRendering();
+
+    expect(onSave).not.toHaveBeenCalled();
+    expect(onClearLogs).not.toHaveBeenCalled();
+    expect(onSyncNow).not.toHaveBeenCalled();
+    expect(panelMocks.resolveDidaCommand).not.toHaveBeenCalled();
+    expect(view.element.childElementCount).toBe(0);
+  });
+
+  test("destroy prevents deferred notebook and project continuations from rerendering", async () => {
+    const notebooks = deferred<Array<{ id: string; name: string }>>();
+    const projects = deferred<Array<{ id: string; name: string }>>();
+    panelMocks.notebooks = notebooks.promise;
+    panelMocks.projects = projects.promise;
+    const view = buildSettingsPanel({
+      settings: settings(),
+      t: createTranslator("en"),
+      status: createSyncStatusController({ state: "pending" }),
+      onSyncNow: vi.fn(),
+      onSave: async (savedSettings) => savedSettings,
+      onClearLogs: async () => undefined
+    });
+    const ranges = view.element.querySelector<HTMLElement>('[data-field="ranges"]')!;
+    const replaceChildren = vi.spyOn(ranges, "replaceChildren");
+    replaceChildren.mockClear();
+
+    view.destroy();
+    notebooks.resolve([{ id: "box-1", name: "Notebook" }]);
+    projects.resolve([{ id: "project-1", name: "Project" }]);
+    await flushAsyncRendering();
+
+    expect(replaceChildren).not.toHaveBeenCalled();
   });
 });

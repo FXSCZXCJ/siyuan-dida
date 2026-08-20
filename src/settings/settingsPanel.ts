@@ -30,6 +30,9 @@ export interface SettingsPanelView {
 
 export function buildSettingsPanel(options: SettingsPanelOptions): SettingsPanelView {
   const { t } = options;
+  const eventController = new AbortController();
+  const eventOptions = { signal: eventController.signal };
+  let disposed = false;
   const ranges = options.settings.ranges.length > 0
     ? options.settings.ranges.map((range) => ({ ...range }))
     : [createEmptyRange(1)];
@@ -141,7 +144,10 @@ export function buildSettingsPanel(options: SettingsPanelOptions): SettingsPanel
   logs.textContent = formatSyncLogs(options.settings.logs.slice(0, 10), t);
 
   const renderRanges = () => {
-    rangesEl.replaceChildren(...state.ranges.map((range, index) => renderRange(range, index, state, renderRanges)));
+    if (disposed) return;
+    rangesEl.replaceChildren(...state.ranges.map((range, index) =>
+      renderRange(range, index, state, renderRanges, eventController.signal)
+    ));
   };
 
   const rebaseAfterSave = (savedSettings: PluginSettings) => {
@@ -161,51 +167,64 @@ export function buildSettingsPanel(options: SettingsPanelOptions): SettingsPanel
   };
 
   const rememberResolvedCliPath = async (resolvedCommand: string) => {
-    options.settings = await options.onSave(
+    if (disposed) return false;
+    const savedSettings = await options.onSave(
       withResolvedCliPathForCurrentDevice(options.settings, resolvedCommand)
     );
+    if (disposed) return false;
+    options.settings = savedSettings;
+    return true;
   };
 
   root.querySelector('[data-action="test"]')?.addEventListener("click", async () => {
     try {
       const resolved = await resolveDidaCommand(cliCommand.value || "dida");
-      await rememberResolvedCliPath(resolved.command);
+      if (disposed || !await rememberResolvedCliPath(resolved.command)) return;
       showMessage(t("cliAvailable", { command: resolved.command, version: resolved.version }));
-      state.projects = await new DidaCliClient(resolved.command).listProjects();
+      const projects = await new DidaCliClient(resolved.command).listProjects();
+      if (disposed) return;
+      state.projects = projects;
       renderRanges();
     } catch (error) {
+      if (disposed) return;
       showMessage(t("cliUnavailable", { message: (error as Error).message }), 5000, "error");
     }
-  });
+  }, eventOptions);
 
   root.querySelector('[data-action="loadProjects"]')?.addEventListener("click", async () => {
     try {
       const resolved = await resolveDidaCommand(cliCommand.value || "dida");
-      await rememberResolvedCliPath(resolved.command);
-      state.projects = await new DidaCliClient(resolved.command).listProjects();
+      if (disposed || !await rememberResolvedCliPath(resolved.command)) return;
+      const projects = await new DidaCliClient(resolved.command).listProjects();
+      if (disposed) return;
+      state.projects = projects;
       renderRanges();
       showMessage(t("projectsRefreshed"));
     } catch (error) {
+      if (disposed) return;
       showMessage(t("projectsRefreshFailed", { message: (error as Error).message }), 5000, "error");
     }
-  });
+  }, eventOptions);
 
   root.querySelector('[data-action="loadNotebooks"]')?.addEventListener("click", async () => {
     try {
-      state.notebooks = await listNotebooks();
+      const notebooks = await listNotebooks();
+      if (disposed) return;
+      state.notebooks = notebooks;
       renderRanges();
       showMessage(t("notebooksRefreshed"));
     } catch (error) {
+      if (disposed) return;
       showMessage(t("notebooksRefreshFailed", { message: (error as Error).message }), 5000, "error");
     }
-  });
+  }, eventOptions);
 
   root.querySelector('[data-action="addRange"]')?.addEventListener("click", () => {
     const range = createEmptyRange(state.ranges.length + 1);
     state.originalTargetProjectIds.set(range, "");
     state.ranges.push(range);
     renderRanges();
-  });
+  }, eventOptions);
 
   root.querySelector('[data-action="save"]')?.addEventListener("click", async () => {
     try {
@@ -217,44 +236,52 @@ export function buildSettingsPanel(options: SettingsPanelOptions): SettingsPanel
         syncIntervalSeconds: Number(syncIntervalSeconds.value || 15),
         ranges
       }));
+      if (disposed) return;
       rebaseAfterSave(savedSettings);
       showMessage(t("settingsSaved"));
     } catch (error) {
+      if (disposed) return;
       showMessage(t("settingsSaveFailed", { message: getRangeValidationMessage(error, t) }), 5000, "error");
     }
-  });
+  }, eventOptions);
 
   root.querySelector('[data-action="copyLogs"]')?.addEventListener("click", async () => {
     try {
       await navigator.clipboard.writeText(formatSyncLogs(options.settings.logs.slice(0, 20), t));
+      if (disposed) return;
       showMessage(t("logsCopied"));
     } catch (error) {
+      if (disposed) return;
       showMessage(t("logsCopyFailed", { message: (error as Error).message }), 5000, "error");
     }
-  });
+  }, eventOptions);
 
   root.querySelector('[data-action="clearLogs"]')?.addEventListener("click", async () => {
     try {
       await options.onClearLogs();
+      if (disposed) return;
       options.settings.logs = [];
       logs.textContent = formatSyncLogs([], t);
       showMessage(t("logsCleared"));
     } catch (error) {
+      if (disposed) return;
       showMessage(t("logsClearFailed", { message: (error as Error).message }), 5000, "error");
     }
-  });
+  }, eventOptions);
 
   renderRanges();
   void listNotebooks()
     .then((notebooks) => {
+      if (disposed) return;
       state.notebooks = notebooks;
       renderRanges();
     })
     .catch(() => undefined);
 
   void resolveDidaCommand(getResolvedCliPathForCurrentDevice(options.settings) || options.settings.cliCommand || "dida")
-    .then((resolved) => new DidaCliClient(resolved.command).listProjects())
+    .then((resolved) => disposed ? [] : new DidaCliClient(resolved.command).listProjects())
     .then((projects) => {
+      if (disposed) return;
       state.projects = projects;
       renderRanges();
     })
@@ -262,7 +289,13 @@ export function buildSettingsPanel(options: SettingsPanelOptions): SettingsPanel
 
   return {
     element: root,
-    destroy: statusView.destroy
+    destroy() {
+      if (disposed) return;
+      disposed = true;
+      eventController.abort();
+      statusView.destroy();
+      root.replaceChildren();
+    }
   };
 }
 
@@ -276,7 +309,8 @@ function renderRange(
     originalTargetProjectIds: WeakMap<SyncRange, string>;
     t: Translate;
   },
-  rerender: () => void
+  rerender: () => void,
+  signal: AbortSignal
 ): HTMLElement {
   const wrapper = document.createElement("div");
   const { t } = state;
@@ -314,10 +348,10 @@ function renderRange(
     </label>
   `;
 
-  bindInput(wrapper, "name", range, "name");
-  bindInput(wrapper, "notebookId", range, "notebookId");
-  bindInput(wrapper, "hpathPrefix", range, "hpathPrefix");
-  bindInput(wrapper, "targetProjectId", range, "targetProjectId");
+  bindInput(wrapper, "name", range, "name", signal);
+  bindInput(wrapper, "notebookId", range, "notebookId", signal);
+  bindInput(wrapper, "hpathPrefix", range, "hpathPrefix", signal);
+  bindInput(wrapper, "targetProjectId", range, "targetProjectId", signal);
 
   const updateTargetProjectWarning = () => {
     const warning = wrapper.querySelector<HTMLElement>('[data-field="targetProjectWarning"]')!;
@@ -334,7 +368,7 @@ function renderRange(
   includeChildren.checked = range.includeChildren;
   includeChildren.addEventListener("change", () => {
     range.includeChildren = includeChildren.checked;
-  });
+  }, { signal });
 
   const handleTargetProjectInput = (event: Event) => {
     const value = (event.target as HTMLInputElement | HTMLSelectElement).value;
@@ -344,8 +378,8 @@ function renderRange(
     updateTargetProjectWarning();
   };
   const targetProjectControl = wrapper.querySelector('[data-field="targetProjectId"]');
-  targetProjectControl?.addEventListener("input", handleTargetProjectInput);
-  targetProjectControl?.addEventListener("change", handleTargetProjectInput);
+  targetProjectControl?.addEventListener("input", handleTargetProjectInput, { signal });
+  targetProjectControl?.addEventListener("change", handleTargetProjectInput, { signal });
 
   wrapper.querySelector('[data-action="removeRange"]')?.addEventListener("click", () => {
     state.ranges.splice(index, 1);
@@ -355,7 +389,7 @@ function renderRange(
       state.ranges.push(emptyRange);
     }
     rerender();
-  });
+  }, { signal });
 
   updateTargetProjectWarning();
 
@@ -392,7 +426,13 @@ function renderProjectControl(range: SyncRange, projects: DidaProject[], t: Tran
   return `<select class="b3-select fn__block" data-field="targetProjectId">${options}</select>`;
 }
 
-function bindInput<K extends keyof SyncRange>(root: HTMLElement, field: string, range: SyncRange, key: K) {
+function bindInput<K extends keyof SyncRange>(
+  root: HTMLElement,
+  field: string,
+  range: SyncRange,
+  key: K,
+  signal: AbortSignal
+) {
   const input = root.querySelector<HTMLInputElement | HTMLSelectElement>(`[data-field="${field}"]`);
   if (!input) {
     return;
@@ -400,10 +440,10 @@ function bindInput<K extends keyof SyncRange>(root: HTMLElement, field: string, 
   input.value = String(range[key] ?? "");
   input.addEventListener("input", () => {
     range[key] = input.value as SyncRange[K];
-  });
+  }, { signal });
   input.addEventListener("change", () => {
     range[key] = input.value as SyncRange[K];
-  });
+  }, { signal });
 }
 
 function escapeHtml(value: string): string {
