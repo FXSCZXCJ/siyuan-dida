@@ -52,6 +52,10 @@ function fullLog(overrides: Partial<SyncResult> = {}): SyncResult {
 }
 
 describe("formatSyncLogs", () => {
+  test("defaults old calls without a translator to Chinese", () => {
+    expect(formatSyncLogs([])).toBe("暂无同步日志。");
+  });
+
   test.each([
     ["en", "No sync logs yet."],
     ["zh-CN", "暂无同步日志。"]
@@ -114,9 +118,35 @@ describe("formatSyncLogs", () => {
     expect(text).toContain("recovered 0");
     expect(text.match(/recovered 0/g)).toHaveLength(2);
   });
+
+  test("formats a compact historical log without optional detail collections", () => {
+    const historicalLog = {
+      created: 1,
+      updated: 2,
+      completed: 3,
+      writtenBack: 4,
+      failed: 0,
+      skipped: 5,
+      scanned: 6,
+      rangeCursorOffsets: {},
+      startedAt: "2025-01-02T03:04:05.000Z",
+      finishedAt: "2025-01-02T03:04:06.000Z"
+    } as SyncResult;
+
+    expect(() => formatSyncLogs([historicalLog])).not.toThrow();
+    expect(formatSyncLogs([historicalLog])).toContain(
+      "汇总：扫描 6，新增 1，恢复 0，更新 2，完成 3，回写 4，跳过 5，失败 0"
+    );
+  });
 });
 
 describe("summarizeSyncLog", () => {
+  test("defaults old calls without a translator to Chinese", () => {
+    expect(summarizeSyncLog(fullLog({ recovered: undefined }))).toBe(
+      "扫描 8，新增 2，恢复 0，更新 3，完成 4，回写 5，跳过 7，失败 6"
+    );
+  });
+
   test("summarizes all counters in English", () => {
     expect(summarizeSyncLog(fullLog(), createTranslator("en"))).toBe(
       "scanned 8, created 2, recovered 1, updated 3, completed 4, written back 5, skipped 7, failed 6"

@@ -1,7 +1,7 @@
 import type { SyncResult } from "../core/types";
-import type { Translate } from "../i18n";
+import { createTranslator, type Translate } from "../i18n";
 
-export function formatSyncLogs(logs: SyncResult[], t: Translate): string {
+export function formatSyncLogs(logs: SyncResult[], t: Translate = createTranslator("zh-CN")): string {
   if (logs.length === 0) {
     return t("syncLogEmpty");
   }
@@ -59,7 +59,7 @@ export function formatSyncLogs(logs: SyncResult[], t: Translate): string {
     .join("\n\n");
 }
 
-export function summarizeSyncLog(log: SyncResult, t: Translate): string {
+export function summarizeSyncLog(log: SyncResult, t: Translate = createTranslator("zh-CN")): string {
   return summarizeCounters(log, t);
 }
 
