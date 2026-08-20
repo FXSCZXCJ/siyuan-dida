@@ -49,9 +49,9 @@ const COMPLETED_TASK_LOWER_BOUND_SECOND = 0;
 const DEFAULT_COMPLETED_TASK_CLOCK_SKEW_SECONDS = 5 * 60;
 const DEFAULT_MAX_COMPLETED_QUERIES = 256;
 const DEFAULT_COMPLETED_SNAPSHOT_DEADLINE_MS = 120_000;
-const COMPLETED_SNAPSHOT_PROTOCOLS: Record<string, { resultLimit: number }> = {
-  "0.1.10": { resultLimit: 200 }
-};
+const COMPLETED_SNAPSHOT_PROTOCOLS: ReadonlyMap<string, { resultLimit: number }> = new Map([
+  ["0.1.10", { resultLimit: 200 }]
+]);
 
 export const defaultRunner: CommandRunner = (command, args) =>
   new Promise((resolve, reject) => {
@@ -493,7 +493,7 @@ export class DidaCliClient {
 
 function completedSnapshotProtocol(cliVersion: string | undefined): { resultLimit: number } {
   const normalizedVersion = cliVersion?.trim().replace(/^v/i, "") ?? "";
-  const protocol = COMPLETED_SNAPSHOT_PROTOCOLS[normalizedVersion];
+  const protocol = COMPLETED_SNAPSHOT_PROTOCOLS.get(normalizedVersion);
   if (!protocol) {
     const displayedVersion = cliVersion?.trim() || "missing";
     throw new Error(

@@ -546,7 +546,16 @@ describe("DidaCliClient", () => {
     expect(calls).toBe(1);
   });
 
-  test.each([undefined, "", "0.1.9", "0.1.11"])(
+  test.each([
+    undefined,
+    "",
+    "0.1.9",
+    "0.1.11",
+    "toString",
+    "constructor",
+    "__proto__",
+    "hasOwnProperty"
+  ])(
     "rejects unsupported CLI version %j before requesting completed tasks",
     async (cliVersion) => {
       let calls = 0;
