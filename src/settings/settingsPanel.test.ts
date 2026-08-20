@@ -240,6 +240,33 @@ describe("buildSettingsPanel range target behavior", () => {
     expect(warning.hidden).toBe(false);
   });
 
+  test("does not rebase target warnings when the plugin rejects a save", async () => {
+    const onSave = vi.fn(async (_savedSettings: PluginSettings) => {
+      throw new Error("runtime write failed");
+    });
+    const panel = buildSettingsPanel({
+      settings: settings(),
+      t: createTranslator("en"),
+      onSave,
+      onClearLogs: async () => undefined
+    });
+    const target = panel.querySelector<HTMLInputElement>('[data-field="targetProjectId"]')!;
+    const warning = panel.querySelector<HTMLElement>('[data-field="targetProjectWarning"]')!;
+
+    target.value = "project-2";
+    target.dispatchEvent(new Event("input", { bubbles: true }));
+    panel.querySelector<HTMLButtonElement>('[data-action="save"]')!.click();
+    await flushAsyncRendering();
+
+    expect(onSave).toHaveBeenCalledOnce();
+    expect(target.value).toBe("project-2");
+    expect(warning.hidden).toBe(false);
+
+    target.value = "project-1";
+    target.dispatchEvent(new Event("input", { bubbles: true }));
+    expect(warning.hidden).toBe(true);
+  });
+
   test("uses a newly added range target as its baseline after the first save", async () => {
     const onSave = vi.fn(async (savedSettings: PluginSettings) => savedSettings);
     const panel = buildSettingsPanel({

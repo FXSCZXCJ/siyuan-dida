@@ -49,7 +49,7 @@ export default class SiyuanDidaPlugin extends Plugin {
     this.settings = prepared.settings;
     this.rangeConfigurationError = prepared.error;
     if (prepared.changed) {
-      await this.saveSettings();
+      await this.persistSettings(this.settings);
     }
     this.syncButton = this.addTopBar({
       icon: "iconRefresh",
@@ -99,11 +99,12 @@ export default class SiyuanDidaPlugin extends Plugin {
           settings: this.settings,
           t: this.t,
           onSave: async (settings) => {
-            const reconciled = reconcileSettingsForSave(this.settings, normalizeSettings(settings));
+            const previousSettings = this.settings;
+            const reconciled = reconcileSettingsForSave(previousSettings, normalizeSettings(settings));
             const prepared = prepareLoadedSettings(reconciled);
+            await this.persistSettings(prepared.settings, previousSettings);
             this.settings = prepared.settings;
             this.rangeConfigurationError = prepared.error;
-            await this.saveSettings();
             this.resetTimer();
             this.updateStatus(
               this.rangeConfigurationError
@@ -121,9 +122,22 @@ export default class SiyuanDidaPlugin extends Plugin {
     }, 0);
   }
 
-  private async saveSettings() {
-    await this.storage.saveConfiguration(this.settings);
-    await this.storage.saveRuntime(this.settings);
+  private async persistSettings(settings: PluginSettings, previousSettings?: PluginSettings) {
+    let configurationSaved = false;
+    try {
+      await this.storage.saveConfiguration(settings);
+      configurationSaved = true;
+      await this.storage.saveRuntime(settings);
+    } catch (error) {
+      if (configurationSaved && previousSettings) {
+        try {
+          await this.storage.saveConfiguration(previousSettings);
+        } catch (rollbackError) {
+          throw new SettingsPersistenceRollbackError(error, rollbackError);
+        }
+      }
+      throw error;
+    }
   }
 
   private resetTimer() {
@@ -205,6 +219,24 @@ export default class SiyuanDidaPlugin extends Plugin {
     }
   }
 
+}
+
+class SettingsPersistenceRollbackError extends Error {
+  readonly persistenceError: unknown;
+  readonly rollbackError: unknown;
+
+  constructor(persistenceError: unknown, rollbackError: unknown) {
+    super(
+      `Failed to persist settings (${errorMessage(persistenceError)}) and failed to restore the previous configuration (${errorMessage(rollbackError)})`
+    );
+    this.name = "SettingsPersistenceRollbackError";
+    this.persistenceError = persistenceError;
+    this.rollbackError = rollbackError;
+  }
+}
+
+function errorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
 }
 
 function createErrorSyncResult(message: string): SyncResult {

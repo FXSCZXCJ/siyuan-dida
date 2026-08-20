@@ -2,10 +2,12 @@
 
 import { beforeEach, describe, expect, test, vi } from "vitest";
 import type { PluginSettings } from "./settings/defaults";
+import type { SettingsPanelOptions } from "./settings/settingsPanel";
 
 const pluginMocks = vi.hoisted(() => ({
   loadedSettings: undefined as PluginSettings | undefined,
   commandCallback: undefined as (() => void) | undefined,
+  panelOnSave: undefined as SettingsPanelOptions["onSave"] | undefined,
   topBarButton: undefined as HTMLElement | undefined,
   showMessage: vi.fn(),
   saveConfiguration: vi.fn(async (_settings: PluginSettings) => undefined),
@@ -14,7 +16,13 @@ const pluginMocks = vi.hoisted(() => ({
 }));
 
 vi.mock("siyuan", () => ({
-  Dialog: class {},
+  Dialog: class {
+    constructor(options: { content: string }) {
+      const content = document.createElement("div");
+      content.innerHTML = options.content;
+      document.body.append(content);
+    }
+  },
   Plugin: class {
     addTopBar(options: { callback(): void }) {
       pluginMocks.topBarButton = document.createElement("button");
@@ -27,6 +35,13 @@ vi.mock("siyuan", () => ({
     }
   },
   showMessage: pluginMocks.showMessage
+}));
+
+vi.mock("./settings/settingsPanel", () => ({
+  buildSettingsPanel: (options: SettingsPanelOptions) => {
+    pluginMocks.panelOnSave = options.onSave;
+    return document.createElement("div");
+  }
 }));
 
 vi.mock("./settings/workspaceStorage", () => ({
@@ -101,11 +116,19 @@ async function flushPromises() {
   await Promise.resolve();
 }
 
+async function openSettings(plugin: SiyuanDidaPlugin) {
+  plugin.openSetting();
+  await new Promise((resolve) => window.setTimeout(resolve, 0));
+  expect(pluginMocks.panelOnSave).toBeTypeOf("function");
+}
+
 describe("loaded sync-range safety gate", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     pluginMocks.commandCallback = undefined;
+    pluginMocks.panelOnSave = undefined;
     pluginMocks.topBarButton = undefined;
+    document.body.replaceChildren();
     Object.defineProperty(window, "siyuan", {
       configurable: true,
       value: {
@@ -176,6 +199,59 @@ describe("loaded sync-range safety gate", () => {
       expect(pluginMocks.engineSync).not.toHaveBeenCalled();
       expect(pluginMocks.showMessage).toHaveBeenCalledWith(
         `Saved sync ranges are invalid: ${validationMessage} Correct and save them in plugin settings before syncing.`,
+        7000,
+        "error"
+      );
+    }
+  );
+
+  test.each(["configuration", "runtime"] as const)(
+    "keeps an invalid live safety gate when %s persistence rejects a valid save",
+    async (failedWrite) => {
+      pluginMocks.loadedSettings = loadedSettingsWithMissingField("notebookId");
+      const plugin = new SiyuanDidaPlugin({} as never);
+      await plugin.onload();
+      await openSettings(plugin);
+
+      const previousSettings = (plugin as unknown as { settings: PluginSettings }).settings;
+      const saveError = new Error(`${failedWrite} write failed`);
+      if (failedWrite === "configuration") {
+        pluginMocks.saveConfiguration.mockRejectedValueOnce(saveError);
+      } else {
+        pluginMocks.saveRuntime.mockRejectedValueOnce(saveError);
+      }
+      const intervalSpy = vi.spyOn(window, "setInterval");
+      const clearIntervalSpy = vi.spyOn(window, "clearInterval");
+      const validCandidate: PluginSettings = {
+        ...previousSettings,
+        autoSync: true,
+        syncOnStartup: true,
+        ranges: previousSettings.ranges.map((range) => ({
+          ...range,
+          notebookId: "box-1"
+        }))
+      };
+
+      await expect(pluginMocks.panelOnSave!(validCandidate)).rejects.toThrow(saveError.message);
+
+      const liveSettings = (plugin as unknown as { settings: PluginSettings }).settings;
+      expect(liveSettings).toBe(previousSettings);
+      expect(liveSettings).toMatchObject({ autoSync: false, syncOnStartup: false });
+      expect(liveSettings.ranges[0].notebookId).toBe("");
+      expect(intervalSpy).not.toHaveBeenCalled();
+      expect(clearIntervalSpy).not.toHaveBeenCalled();
+      if (failedWrite === "runtime") {
+        expect(pluginMocks.saveConfiguration).toHaveBeenLastCalledWith(previousSettings);
+      }
+
+      pluginMocks.commandCallback?.();
+      await flushPromises();
+      pluginMocks.topBarButton?.click();
+      await flushPromises();
+
+      expect(pluginMocks.engineSync).not.toHaveBeenCalled();
+      expect(pluginMocks.showMessage).toHaveBeenLastCalledWith(
+        expect.stringContaining("Correct and save them in plugin settings before syncing."),
         7000,
         "error"
       );
