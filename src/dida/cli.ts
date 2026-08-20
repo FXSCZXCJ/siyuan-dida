@@ -31,6 +31,22 @@ export interface DidaProject {
   name: string;
 }
 
+interface DidaCliClientOptions {
+  now?: () => Date;
+  clockSkewSeconds?: number;
+  maxCompletedQueries?: number;
+}
+
+interface CompletedTaskInterval {
+  startSecond: number;
+  endSecond: number;
+}
+
+const COMPLETED_TASK_RESULT_CAP = 200;
+const COMPLETED_TASK_LOWER_BOUND_SECOND = 0;
+const DEFAULT_COMPLETED_TASK_CLOCK_SKEW_SECONDS = 5 * 60;
+const DEFAULT_MAX_COMPLETED_QUERIES = 2_048;
+
 export const defaultRunner: CommandRunner = (command, args) =>
   new Promise((resolve, reject) => {
     const desktopPath = buildDesktopPath(process.env.PATH);
@@ -263,7 +279,8 @@ function parseJson<T>(stdout: string): T {
 export class DidaCliClient {
   constructor(
     private readonly command: string,
-    private readonly runner: CommandRunner = defaultRunner
+    private readonly runner: CommandRunner = defaultRunner,
+    private readonly options: DidaCliClientOptions = {}
   ) {}
 
   async testConnection(): Promise<string> {
@@ -345,11 +362,106 @@ export class DidaCliClient {
   }
 
   async listCompletedTasks(projectIds: string[]): Promise<DidaTask[]> {
-    const args = ["task", "completed", "--json"];
+    const clockSkewSeconds = this.options.clockSkewSeconds
+      ?? DEFAULT_COMPLETED_TASK_CLOCK_SKEW_SECONDS;
+    const endSecond = Math.floor(
+      ((this.options.now ?? (() => new Date()))().getTime() / 1_000) + clockSkewSeconds
+    );
+    if (!Number.isSafeInteger(endSecond) || endSecond < COMPLETED_TASK_LOWER_BOUND_SECOND) {
+      throw new Error("Completed snapshot incomplete: invalid upper time bound");
+    }
+
+    const maxQueries = this.options.maxCompletedQueries ?? DEFAULT_MAX_COMPLETED_QUERIES;
+    const intervals: CompletedTaskInterval[] = [{
+      startSecond: COMPLETED_TASK_LOWER_BOUND_SECOND,
+      endSecond
+    }];
+    const completedTasks = new Map<string, DidaTask>();
+    let queryCount = 0;
+
+    while (intervals.length > 0) {
+      if (queryCount >= maxQueries) {
+        throw new Error(`Completed snapshot incomplete: query budget of ${maxQueries} exhausted`);
+      }
+      const interval = intervals.pop()!;
+      queryCount += 1;
+      const tasks = await this.listCompletedTaskInterval(projectIds, interval);
+
+      if (tasks.length >= COMPLETED_TASK_RESULT_CAP) {
+        const shards = splitCompletedTaskInterval(interval);
+        if (!shards) {
+          throw new Error(
+            `Completed snapshot incomplete: saturated one-second shard at ${formatUtcSecond(interval.startSecond)}`
+          );
+        }
+        intervals.push(shards[1], shards[0]);
+        continue;
+      }
+
+      for (const task of tasks) {
+        completedTasks.set(`${task.projectId}\u0000${task.id}`, task);
+      }
+    }
+
+    return [...completedTasks.values()];
+  }
+
+  private async listCompletedTaskInterval(
+    projectIds: string[],
+    interval: CompletedTaskInterval
+  ): Promise<DidaTask[]> {
+    const args = [
+      "task",
+      "completed",
+      "--start-date",
+      formatUtcSecond(interval.startSecond),
+      "--end-date",
+      formatUtcSecond(interval.endSecond)
+    ];
     if (projectIds.length > 0) {
       args.push("--projects", projectIds.join(","));
     }
+    args.push("--json");
     const result = await this.runner(this.command, args);
-    return parseJson<DidaTask[]>(result.stdout);
+    const tasks = parseJson<DidaTask[]>(result.stdout);
+    if (!Array.isArray(tasks)) {
+      throw new Error("Completed snapshot incomplete: CLI response is not an array");
+    }
+    for (const task of tasks) {
+      const completedAt = typeof task.completedTime === "string"
+        ? Date.parse(task.completedTime)
+        : Number.NaN;
+      if (
+        !Number.isFinite(completedAt)
+        || completedAt < interval.startSecond * 1_000
+        || completedAt > interval.endSecond * 1_000
+      ) {
+        throw new Error(
+          `Completed snapshot incomplete: task ${task.projectId ?? "?"}/${task.id ?? "?"} has an invalid or out-of-range completedTime`
+        );
+      }
+    }
+    return tasks;
   }
+}
+
+function formatUtcSecond(epochSecond: number): string {
+  return new Date(epochSecond * 1_000).toISOString().replace(".000Z", "Z");
+}
+
+function splitCompletedTaskInterval(
+  interval: CompletedTaskInterval
+): [CompletedTaskInterval, CompletedTaskInterval] | undefined {
+  if (interval.startSecond === interval.endSecond) return undefined;
+  if (interval.endSecond - interval.startSecond === 1) {
+    return [
+      { startSecond: interval.startSecond, endSecond: interval.startSecond },
+      { startSecond: interval.endSecond, endSecond: interval.endSecond }
+    ];
+  }
+  const midpoint = Math.floor((interval.startSecond + interval.endSecond) / 2);
+  return [
+    { startSecond: interval.startSecond, endSecond: midpoint },
+    { startSecond: midpoint, endSecond: interval.endSecond }
+  ];
 }
