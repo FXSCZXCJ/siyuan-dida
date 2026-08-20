@@ -3,11 +3,18 @@ import { Dialog, Plugin, showMessage } from "siyuan";
 import { SyncEngine } from "./core/syncEngine";
 import { resolveDidaCommand, DidaCliClient } from "./dida/cli";
 import { DidaCliGateway } from "./dida/gateway";
-import { DEFAULT_SETTINGS, normalizeSettings, type PluginSettings } from "./settings/defaults";
+import {
+  DEFAULT_SETTINGS,
+  normalizeSettings,
+  prepareLoadedSettings,
+  reconcileSettingsForSave,
+  type PluginSettings
+} from "./settings/defaults";
 import { getResolvedCliPathForCurrentDevice, withResolvedCliPathForCurrentDevice } from "./settings/deviceCli";
 import { summarizeSyncLog } from "./settings/logFormat";
 import { buildSettingsPanel } from "./settings/settingsPanel";
 import { WorkspaceStorage } from "./settings/workspaceStorage";
+import { getRangeValidationMessage, type RangeValidationError } from "./settings/ranges";
 import { SiYuanRepository } from "./siyuan/repository";
 import { setSyncTooltip } from "./syncTooltip";
 import type { SyncResult } from "./core/types";
@@ -22,6 +29,7 @@ export default class SiyuanDidaPlugin extends Plugin {
   private syncButton!: HTMLElement;
   private t!: Translate;
   private storage!: WorkspaceStorage;
+  private rangeConfigurationError: RangeValidationError | undefined;
 
   async onload() {
     const config = window.siyuan.config;
@@ -33,17 +41,27 @@ export default class SiyuanDidaPlugin extends Plugin {
       config.system.confDir,
       config.system.workspaceDir
     );
-    this.settings = await this.storage.initialize(
+    const loadedSettings = await this.storage.initialize(
       () => this.loadData(LEGACY_STORAGE_NAME),
       () => this.removeData(LEGACY_STORAGE_NAME)
     );
+    const prepared = prepareLoadedSettings(loadedSettings);
+    this.settings = prepared.settings;
+    this.rangeConfigurationError = prepared.error;
+    if (prepared.changed) {
+      await this.saveSettings();
+    }
     this.syncButton = this.addTopBar({
       icon: "iconRefresh",
       title: this.t("syncDida"),
       position: "right",
       callback: () => void this.runSync()
     });
-    this.updateStatus(this.t("syncPending"));
+    this.updateStatus(
+      this.rangeConfigurationError
+        ? this.t("configurationInvalidStatus")
+        : this.t("syncPending")
+    );
 
     this.addCommand({
       langKey: "sync-dida-now",
@@ -52,7 +70,7 @@ export default class SiyuanDidaPlugin extends Plugin {
     });
 
     this.resetTimer();
-    if (this.settings.syncOnStartup) {
+    if (!this.rangeConfigurationError && this.settings.syncOnStartup) {
       setTimeout(() => void this.runSync(), 1000);
     }
   }
@@ -81,9 +99,18 @@ export default class SiyuanDidaPlugin extends Plugin {
           settings: this.settings,
           t: this.t,
           onSave: async (settings) => {
-            this.settings = normalizeSettings(settings);
+            const reconciled = reconcileSettingsForSave(this.settings, normalizeSettings(settings));
+            const prepared = prepareLoadedSettings(reconciled);
+            this.settings = prepared.settings;
+            this.rangeConfigurationError = prepared.error;
             await this.saveSettings();
             this.resetTimer();
+            this.updateStatus(
+              this.rangeConfigurationError
+                ? this.t("configurationInvalidStatus")
+                : this.t("syncPending")
+            );
+            return this.settings;
           },
           onClearLogs: async () => {
             await this.storage.clearLogs();
@@ -105,7 +132,7 @@ export default class SiyuanDidaPlugin extends Plugin {
       this.syncTimer = undefined;
     }
 
-    if (!this.settings.autoSync) {
+    if (this.rangeConfigurationError || !this.settings.autoSync) {
       return;
     }
 
@@ -114,6 +141,20 @@ export default class SiyuanDidaPlugin extends Plugin {
   }
 
   private async runSync(options: { silentSkip?: boolean } = {}) {
+    if (this.rangeConfigurationError) {
+      this.updateStatus(this.t("configurationInvalidStatus"));
+      if (!options.silentSkip) {
+        showMessage(
+          this.t("configurationInvalidSyncBlocked", {
+            message: getRangeValidationMessage(this.rangeConfigurationError, this.t)
+          }),
+          7000,
+          "error"
+        );
+      }
+      return;
+    }
+
     if (this.syncRunning) {
       if (!options.silentSkip) {
         showMessage(this.t("syncInProgress"));

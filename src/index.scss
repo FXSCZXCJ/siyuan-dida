@@ -143,6 +143,16 @@
   margin-top: 6px;
 }
 
+.dida-sync-range-warning {
+  background: var(--b3-card-warning-background);
+  border-radius: 4px;
+  color: var(--b3-card-warning-color);
+  font-size: 12px;
+  line-height: 1.45;
+  margin-top: 10px;
+  padding: 6px 8px;
+}
+
 .dida-sync-log {
   background: var(--b3-theme-surface);
   border: 1px solid var(--b3-border-color);

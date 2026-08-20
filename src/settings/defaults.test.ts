@@ -3,9 +3,74 @@ import {
   DEFAULT_SETTINGS,
   mergeStoredSettings,
   normalizeSettings,
+  prepareLoadedSettings,
+  reconcileSettingsForSave,
   settingsForSave,
   splitSettingsForStorage
 } from "./defaults";
+
+function configuredRange(overrides: Record<string, unknown> = {}) {
+  return {
+    id: "range-1",
+    name: "Work",
+    notebookId: "box-1",
+    hpathPrefix: "/Work",
+    includeChildren: true,
+    targetProjectId: "project-1",
+    targetProjectName: "Work list",
+    cursorOffset: 7,
+    ...overrides
+  };
+}
+
+describe("prepareLoadedSettings", () => {
+  test.each([
+    {
+      label: "duplicate IDs",
+      ranges: [
+        configuredRange(),
+        configuredRange({ hpathPrefix: "/Personal", targetProjectId: "project-2" })
+      ],
+      code: "duplicate_range_id"
+    },
+    {
+      label: "overlapping paths",
+      ranges: [
+        configuredRange({ id: "range-1" }),
+        configuredRange({ id: "range-2", hpathPrefix: "/Work/Weekly" })
+      ],
+      code: "overlapping_ranges"
+    }
+  ])("disables automatic and startup sync for loaded $label without removing ranges", ({ ranges, code }) => {
+    const result = prepareLoadedSettings(
+      normalizeSettings({ ...DEFAULT_SETTINGS, autoSync: true, syncOnStartup: true, ranges })
+    );
+
+    expect(result.settings.ranges).toHaveLength(2);
+    expect(result.settings).toMatchObject({ autoSync: false, syncOnStartup: false });
+    expect(result.error).toMatchObject({ code });
+    expect(result.changed).toBe(true);
+  });
+
+  test("persists harmless normalization once while retaining the matching runtime cursor", () => {
+    const loaded = normalizeSettings({
+      ...DEFAULT_SETTINGS,
+      ranges: [configuredRange({ id: "", hpathPrefix: " Work//Weekly/// ", cursorOffset: 43 })]
+    });
+
+    const first = prepareLoadedSettings(loaded, () => "range-generated");
+    const second = prepareLoadedSettings(first.settings, () => "range-unexpected");
+
+    expect(first).toMatchObject({ changed: true, error: undefined });
+    expect(first.settings.ranges[0]).toMatchObject({
+      id: "range-generated",
+      hpathPrefix: "/Work/Weekly",
+      cursorOffset: 43
+    });
+    expect(second.changed).toBe(false);
+    expect(second.settings.ranges[0].id).toBe("range-generated");
+  });
+});
 
 describe("settingsForSave", () => {
   test("defaults legacy settings to creating new tasks with today's date", () => {
@@ -48,6 +113,33 @@ describe("settingsForSave", () => {
 
     expect(next.resolvedCliPath).toBe("");
     expect(next.resolvedCliPaths).toEqual({});
+  });
+});
+
+describe("reconcileSettingsForSave", () => {
+  test("preserves the latest runtime cursor for matching range IDs", () => {
+    const current = normalizeSettings({
+      ...DEFAULT_SETTINGS,
+      ranges: [configuredRange({ cursorOffset: 82 })]
+    });
+    const submitted = normalizeSettings({
+      ...current,
+      ranges: [configuredRange({ targetProjectId: "project-2", cursorOffset: 7 })]
+    });
+
+    const canonical = reconcileSettingsForSave(current, submitted);
+
+    expect(canonical.ranges[0]).toMatchObject({ targetProjectId: "project-2", cursorOffset: 82 });
+  });
+
+  test("keeps the submitted cursor for a newly added range", () => {
+    const current = normalizeSettings({ ...DEFAULT_SETTINGS, ranges: [] });
+    const submitted = normalizeSettings({
+      ...DEFAULT_SETTINGS,
+      ranges: [configuredRange({ id: "range-new", cursorOffset: 4 })]
+    });
+
+    expect(reconcileSettingsForSave(current, submitted).ranges[0].cursorOffset).toBe(4);
   });
 });
 

@@ -31,6 +31,8 @@ export class RangeValidationError extends Error {
 
 export type RangeIdFactory = () => string;
 
+let fallbackRangeIdSequence = 0;
+
 export function createRangeId(): string {
   const randomUuid = globalThis.crypto?.randomUUID?.();
   if (randomUuid) {
@@ -39,7 +41,8 @@ export function createRangeId(): string {
 
   const timestamp = Date.now().toString(36);
   const random = Math.random().toString(36).slice(2);
-  return `range-${timestamp}-${random}`;
+  fallbackRangeIdSequence += 1;
+  return `range-${timestamp}-${random}-${fallbackRangeIdSequence.toString(36)}`;
 }
 
 export function createEmptyRange(index: number, createId: RangeIdFactory = createRangeId): SyncRange {
@@ -60,10 +63,36 @@ export function prepareRangesForSave(ranges: SyncRange[]): SyncRange[] {
     .map((range, index) => ({ range: normalizeRange(range, index + 1), sourceIndex: index + 1 }))
     .filter(({ range }) => !isEmptyRange(range));
 
-  normalized.forEach(({ range, sourceIndex }) => validateRequiredFields(range, sourceIndex));
-  validateUniqueIds(normalized);
-  validateNonOverlappingRanges(normalized);
+  validateNormalizedRanges(normalized);
   return normalized.map(({ range }) => range);
+}
+
+export interface LoadedRangesInspection {
+  ranges: SyncRange[];
+  error?: RangeValidationError;
+}
+
+export function inspectLoadedRanges(
+  ranges: SyncRange[],
+  createId: RangeIdFactory = createRangeId
+): LoadedRangesInspection {
+  const normalized = ranges.map((range, index) => ({
+    range: normalizeRange(range, index + 1, createId),
+    sourceIndex: index + 1
+  }));
+
+  try {
+    validateNormalizedRanges(normalized);
+    return { ranges: normalized.map(({ range }) => range) };
+  } catch (error) {
+    if (!(error instanceof RangeValidationError)) {
+      throw error;
+    }
+    return {
+      ranges: normalized.map(({ range }) => range),
+      error
+    };
+  }
 }
 
 export function getRangeValidationMessage(error: unknown, t: Translate): string {
@@ -101,21 +130,25 @@ export function getTargetProjectWarning(originalTargetProjectId: string, targetP
   return t("targetProjectChangedWarning");
 }
 
-function normalizeRange(range: SyncRange, index: number): SyncRange {
+function normalizeRange(
+  range: SyncRange,
+  index: number,
+  createId: RangeIdFactory = createRangeId
+): SyncRange {
   return {
-    id: range.id.trim() || createRangeId(),
-    name: range.name.trim() || `同步范围 ${index}`,
-    notebookId: range.notebookId.trim(),
+    id: normalizeText(range.id) || createId(),
+    name: normalizeText(range.name) || `同步范围 ${index}`,
+    notebookId: normalizeText(range.notebookId),
     hpathPrefix: normalizeDocumentPath(range.hpathPrefix),
-    includeChildren: range.includeChildren,
-    targetProjectId: range.targetProjectId.trim(),
-    targetProjectName: range.targetProjectName.trim(),
+    includeChildren: range.includeChildren !== false,
+    targetProjectId: normalizeText(range.targetProjectId),
+    targetProjectName: normalizeText(range.targetProjectName),
     cursorOffset: normalizeCursorOffset(range.cursorOffset)
   };
 }
 
 function normalizeDocumentPath(value: string): string {
-  const trimmed = value.trim();
+  const trimmed = normalizeText(value);
   if (!trimmed) {
     return "";
   }
@@ -145,6 +178,12 @@ function validateRequiredFields(range: SyncRange, index: number): void {
 interface IndexedRange {
   range: SyncRange;
   sourceIndex: number;
+}
+
+function validateNormalizedRanges(ranges: IndexedRange[]): void {
+  ranges.forEach(({ range, sourceIndex }) => validateRequiredFields(range, sourceIndex));
+  validateUniqueIds(ranges);
+  validateNonOverlappingRanges(ranges);
 }
 
 function validateUniqueIds(ranges: IndexedRange[]): void {
@@ -224,4 +263,8 @@ function normalizeCursorOffset(value: number | undefined): number {
     return 0;
   }
   return Math.max(0, Math.floor(value));
+}
+
+function normalizeText(value: unknown): string {
+  return typeof value === "string" ? value.trim() : "";
 }

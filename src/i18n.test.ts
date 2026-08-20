@@ -22,4 +22,21 @@ describe("createTranslator", () => {
       "已有绑定仍保留在原滴答清单中；只有新同步的任务会使用新选择的清单。"
     );
   });
+
+  test("provides localized invalid loaded-configuration status and correction copy", () => {
+    expect(createTranslator("en")("configurationInvalidStatus")).toBe("Dida: configuration invalid");
+    expect(
+      createTranslator("en")("configurationInvalidSyncBlocked", {
+        message: "Sync ranges 1 and 2 overlap."
+      })
+    ).toBe(
+      "Saved sync ranges are invalid: Sync ranges 1 and 2 overlap. Correct and save them in plugin settings before syncing."
+    );
+    expect(createTranslator("zh-CN")("configurationInvalidStatus")).toBe("滴答：配置无效");
+    expect(
+      createTranslator("zh-CN")("configurationInvalidSyncBlocked", {
+        message: "同步范围 1 和 2 存在重叠。"
+      })
+    ).toBe("已保存的同步范围无效：同步范围 1 和 2 存在重叠。请先在插件设置中修正并保存，然后再同步。");
+  });
 });

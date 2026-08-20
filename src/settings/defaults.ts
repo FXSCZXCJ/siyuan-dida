@@ -1,4 +1,10 @@
 import type { NewTaskDate, SyncRange, SyncResult } from "../core/types";
+import {
+  createRangeId,
+  inspectLoadedRanges,
+  type RangeIdFactory,
+  type RangeValidationError
+} from "./ranges";
 
 export interface PluginSettings {
   cliCommand: string;
@@ -55,6 +61,32 @@ export function normalizeSettings(value: Partial<PluginSettings> | null | undefi
   };
 }
 
+export interface LoadedSettingsPreparation {
+  settings: PluginSettings;
+  error?: RangeValidationError;
+  changed: boolean;
+}
+
+export function prepareLoadedSettings(
+  value: PluginSettings,
+  createId: RangeIdFactory = createRangeId
+): LoadedSettingsPreparation {
+  const current = normalizeSettings(value);
+  const inspected = inspectLoadedRanges(current.ranges, createId);
+  const settings: PluginSettings = {
+    ...current,
+    autoSync: inspected.error ? false : current.autoSync,
+    syncOnStartup: inspected.error ? false : current.syncOnStartup,
+    ranges: inspected.ranges
+  };
+
+  return {
+    settings,
+    error: inspected.error,
+    changed: JSON.stringify(settings) !== JSON.stringify(current)
+  };
+}
+
 export function settingsForSave(current: PluginSettings, updates: Partial<PluginSettings>): PluginSettings {
   const next = normalizeSettings({
     ...current,
@@ -65,6 +97,26 @@ export function settingsForSave(current: PluginSettings, updates: Partial<Plugin
     next.resolvedCliPaths = {};
   }
   return next;
+}
+
+export function reconcileSettingsForSave(
+  current: PluginSettings,
+  submitted: PluginSettings
+): PluginSettings {
+  const latestCursorByRangeId = new Map(
+    current.ranges.map((range) => [range.id, range.cursorOffset ?? 0])
+  );
+  const commandChanged = submitted.cliCommand !== current.cliCommand;
+  return normalizeSettings({
+    ...submitted,
+    resolvedCliPath: commandChanged ? submitted.resolvedCliPath : current.resolvedCliPath,
+    resolvedCliPaths: commandChanged ? submitted.resolvedCliPaths : current.resolvedCliPaths,
+    logs: current.logs,
+    ranges: submitted.ranges.map((range) => ({
+      ...range,
+      cursorOffset: latestCursorByRangeId.get(range.id) ?? range.cursorOffset ?? 0
+    }))
+  });
 }
 
 export function splitSettingsForStorage(settings: PluginSettings): {

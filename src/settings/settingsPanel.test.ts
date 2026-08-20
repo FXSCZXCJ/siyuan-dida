@@ -133,7 +133,7 @@ describe("buildSettingsPanel range target behavior", () => {
   test("fallback input clears stale target name across an async rerender before save", async () => {
     const notebooks = deferred<Array<{ id: string; name: string }>>();
     panelMocks.notebooks = notebooks.promise;
-    const onSave = vi.fn(async (_settings: PluginSettings) => undefined);
+    const onSave = vi.fn(async (savedSettings: PluginSettings) => savedSettings);
     const panel = buildSettingsPanel({
       settings: settings(),
       t: createTranslator("en"),
@@ -161,11 +161,15 @@ describe("buildSettingsPanel range target behavior", () => {
     const panel = buildSettingsPanel({
       settings: settings(),
       t: createTranslator("en"),
-      onSave: async () => undefined,
+      onSave: async (savedSettings) => savedSettings,
       onClearLogs: async () => undefined
     });
     const targetInput = panel.querySelector<HTMLInputElement>('[data-field="targetProjectId"]')!;
     const warning = panel.querySelector<HTMLElement>('[data-field="targetProjectWarning"]')!;
+
+    expect(warning.classList.contains("dida-sync-range-warning")).toBe(true);
+    expect(warning.getAttribute("role")).toBe("status");
+    expect(warning.getAttribute("aria-live")).toBe("polite");
 
     targetInput.value = "project-2";
     targetInput.dispatchEvent(new Event("input", { bubbles: true }));
@@ -183,7 +187,7 @@ describe("buildSettingsPanel range target behavior", () => {
       { id: "project-1", name: "Original list" },
       { id: "project-2", name: "Second list" }
     ]);
-    const onSave = vi.fn(async (_settings: PluginSettings) => undefined);
+    const onSave = vi.fn(async (savedSettings: PluginSettings) => savedSettings);
     const panel = buildSettingsPanel({
       settings: settings(),
       t: createTranslator("en"),
@@ -210,5 +214,110 @@ describe("buildSettingsPanel range target behavior", () => {
     select.value = "project-1";
     select.dispatchEvent(new Event("change", { bubbles: true }));
     expect(warning.hidden).toBe(true);
+  });
+
+  test("rebases the saved target so changing from B back to A warns", async () => {
+    const onSave = vi.fn(async (savedSettings: PluginSettings) => savedSettings);
+    const panel = buildSettingsPanel({
+      settings: settings(),
+      t: createTranslator("en"),
+      onSave,
+      onClearLogs: async () => undefined
+    });
+
+    const firstTarget = panel.querySelector<HTMLInputElement>('[data-field="targetProjectId"]')!;
+    firstTarget.value = "project-2";
+    firstTarget.dispatchEvent(new Event("input", { bubbles: true }));
+    panel.querySelector<HTMLButtonElement>('[data-action="save"]')!.click();
+    await flushAsyncRendering();
+
+    const rebasedTarget = panel.querySelector<HTMLInputElement>('[data-field="targetProjectId"]')!;
+    const warning = panel.querySelector<HTMLElement>('[data-field="targetProjectWarning"]')!;
+    expect(warning.hidden).toBe(true);
+
+    rebasedTarget.value = "project-1";
+    rebasedTarget.dispatchEvent(new Event("input", { bubbles: true }));
+    expect(warning.hidden).toBe(false);
+  });
+
+  test("uses a newly added range target as its baseline after the first save", async () => {
+    const onSave = vi.fn(async (savedSettings: PluginSettings) => savedSettings);
+    const panel = buildSettingsPanel({
+      settings: settings(),
+      t: createTranslator("en"),
+      onSave,
+      onClearLogs: async () => undefined
+    });
+    panel.querySelector<HTMLButtonElement>('[data-action="addRange"]')!.click();
+
+    const added = panel.querySelectorAll<HTMLElement>(".dida-sync-range")[1];
+    const notebook = added.querySelector<HTMLInputElement>('[data-field="notebookId"]')!;
+    const path = added.querySelector<HTMLInputElement>('[data-field="hpathPrefix"]')!;
+    const target = added.querySelector<HTMLInputElement>('[data-field="targetProjectId"]')!;
+    notebook.value = "box-2";
+    notebook.dispatchEvent(new Event("input", { bubbles: true }));
+    path.value = "/Personal";
+    path.dispatchEvent(new Event("input", { bubbles: true }));
+    target.value = "project-2";
+    target.dispatchEvent(new Event("input", { bubbles: true }));
+
+    panel.querySelector<HTMLButtonElement>('[data-action="save"]')!.click();
+    await flushAsyncRendering();
+
+    const rebasedAdded = panel.querySelectorAll<HTMLElement>(".dida-sync-range")[1];
+    const rebasedTarget = rebasedAdded.querySelector<HTMLInputElement>('[data-field="targetProjectId"]')!;
+    const warning = rebasedAdded.querySelector<HTMLElement>('[data-field="targetProjectWarning"]')!;
+    rebasedTarget.value = "project-3";
+    rebasedTarget.dispatchEvent(new Event("input", { bubbles: true }));
+
+    expect(warning.hidden).toBe(false);
+  });
+
+  test("keeps a generated legacy range ID stable across consecutive saves", async () => {
+    const initial = settings();
+    initial.ranges[0].id = "";
+    const savedIds: string[] = [];
+    const onSave = vi.fn(async (savedSettings: PluginSettings) => {
+      savedIds.push(savedSettings.ranges[0].id);
+      return savedSettings;
+    });
+    const panel = buildSettingsPanel({
+      settings: initial,
+      t: createTranslator("en"),
+      onSave,
+      onClearLogs: async () => undefined
+    });
+
+    panel.querySelector<HTMLButtonElement>('[data-action="save"]')!.click();
+    await flushAsyncRendering();
+    panel.querySelector<HTMLButtonElement>('[data-action="save"]')!.click();
+    await flushAsyncRendering();
+
+    expect(savedIds[0]).toMatch(/^range-/);
+    expect(savedIds[1]).toBe(savedIds[0]);
+  });
+
+  test("rebases to the canonical cursor returned by the plugin", async () => {
+    const submittedCursors: number[] = [];
+    const onSave = vi.fn(async (savedSettings: PluginSettings) => {
+      submittedCursors.push(savedSettings.ranges[0].cursorOffset ?? -1);
+      return {
+        ...savedSettings,
+        ranges: savedSettings.ranges.map((range) => ({ ...range, cursorOffset: 91 }))
+      };
+    });
+    const panel = buildSettingsPanel({
+      settings: settings(),
+      t: createTranslator("en"),
+      onSave,
+      onClearLogs: async () => undefined
+    });
+
+    panel.querySelector<HTMLButtonElement>('[data-action="save"]')!.click();
+    await flushAsyncRendering();
+    panel.querySelector<HTMLButtonElement>('[data-action="save"]')!.click();
+    await flushAsyncRendering();
+
+    expect(submittedCursors).toEqual([0, 91]);
   });
 });

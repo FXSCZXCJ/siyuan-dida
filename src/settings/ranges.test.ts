@@ -1,6 +1,17 @@
-import { describe, expect, test } from "vitest";
+import { afterEach, describe, expect, test, vi } from "vitest";
 import type { SyncRange } from "../core/types";
-import { createEmptyRange, prepareRangesForSave, RangeValidationError } from "./ranges";
+import {
+  createEmptyRange,
+  createRangeId,
+  inspectLoadedRanges,
+  prepareRangesForSave,
+  RangeValidationError
+} from "./ranges";
+
+afterEach(() => {
+  vi.restoreAllMocks();
+  vi.unstubAllGlobals();
+});
 
 function configuredRange(overrides: Partial<SyncRange> = {}): SyncRange {
   return {
@@ -43,6 +54,62 @@ describe("createEmptyRange", () => {
     expect(first).toMatchObject({ name: "同步范围 2", includeChildren: true });
     expect(first.id).toMatch(/^range-/);
     expect(new Set([first.id, second.id, anotherIndex.id])).toHaveLength(3);
+  });
+
+  test("keeps fallback IDs unique when crypto.randomUUID is unavailable", () => {
+    vi.stubGlobal("crypto", {});
+    vi.spyOn(Date, "now").mockReturnValue(1_700_000_000_000);
+    vi.spyOn(Math, "random").mockReturnValue(0.5);
+
+    const first = createRangeId();
+    const second = createRangeId();
+
+    expect(first).toMatch(/^range-/);
+    expect(second).toMatch(/^range-/);
+    expect(second).not.toBe(first);
+  });
+});
+
+describe("inspectLoadedRanges", () => {
+  test("retains duplicate ranges and reports them as invalid", () => {
+    const ranges = [
+      configuredRange(),
+      configuredRange({ hpathPrefix: "/Personal", targetProjectId: "project-2" })
+    ];
+
+    const result = inspectLoadedRanges(ranges);
+
+    expect(result.ranges).toHaveLength(2);
+    expect(result.error).toMatchObject({ code: "duplicate_range_id" });
+  });
+
+  test("retains overlapping ranges and reports them as invalid after harmless path normalization", () => {
+    const result = inspectLoadedRanges([
+      configuredRange({ id: "range-a", hpathPrefix: " Work// " }),
+      configuredRange({ id: "range-b", hpathPrefix: "/Work/Weekly" })
+    ]);
+
+    expect(result.ranges.map((range) => range.hpathPrefix)).toEqual(["/Work", "/Work/Weekly"]);
+    expect(result.error).toMatchObject({ code: "overlapping_ranges" });
+  });
+
+  test("does not treat a fully blank persisted range as an expendable draft", () => {
+    const result = inspectLoadedRanges([createEmptyRange(1, () => "persisted-range")]);
+
+    expect(result.ranges).toHaveLength(1);
+    expect(result.error).toMatchObject({ code: "missing_notebook" });
+  });
+
+  test("generates a blank legacy ID once and keeps it stable after persistence and reload", () => {
+    const firstLoad = inspectLoadedRanges(
+      [configuredRange({ id: "", hpathPrefix: " Work//Weekly/// " })],
+      () => "range-generated"
+    );
+    const secondLoad = inspectLoadedRanges(firstLoad.ranges, () => "range-unexpected");
+
+    expect(firstLoad.error).toBeUndefined();
+    expect(firstLoad.ranges[0]).toMatchObject({ id: "range-generated", hpathPrefix: "/Work/Weekly" });
+    expect(secondLoad.ranges[0].id).toBe("range-generated");
   });
 });
 

@@ -16,7 +16,7 @@ import type { Translate } from "../i18n";
 export interface SettingsPanelOptions {
   settings: PluginSettings;
   t: Translate;
-  onSave(settings: PluginSettings): Promise<void>;
+  onSave(settings: PluginSettings): Promise<PluginSettings>;
   onClearLogs(): Promise<void>;
 }
 
@@ -128,9 +128,26 @@ export function buildSettingsPanel(options: SettingsPanelOptions): HTMLElement {
     rangesEl.replaceChildren(...state.ranges.map((range, index) => renderRange(range, index, state, renderRanges)));
   };
 
+  const rebaseAfterSave = (savedSettings: PluginSettings) => {
+    options.settings = savedSettings;
+    state.ranges = savedSettings.ranges.length > 0
+      ? savedSettings.ranges.map((range) => ({ ...range }))
+      : [createEmptyRange(1)];
+    state.originalTargetProjectIds = new WeakMap<SyncRange, string>();
+    state.ranges.forEach((range) => {
+      state.originalTargetProjectIds.set(range, range.targetProjectId);
+    });
+    cliCommand.value = savedSettings.cliCommand;
+    autoSync.checked = savedSettings.autoSync;
+    syncIntervalSeconds.value = String(savedSettings.syncIntervalSeconds);
+    newTaskDate.value = savedSettings.newTaskDate;
+    renderRanges();
+  };
+
   const rememberResolvedCliPath = async (resolvedCommand: string) => {
-    options.settings = withResolvedCliPathForCurrentDevice(options.settings, resolvedCommand);
-    await options.onSave(options.settings);
+    options.settings = await options.onSave(
+      withResolvedCliPathForCurrentDevice(options.settings, resolvedCommand)
+    );
   };
 
   root.querySelector('[data-action="test"]')?.addEventListener("click", async () => {
@@ -177,13 +194,14 @@ export function buildSettingsPanel(options: SettingsPanelOptions): HTMLElement {
   root.querySelector('[data-action="save"]')?.addEventListener("click", async () => {
     try {
       const ranges = prepareRangesForSave(state.ranges);
-      await options.onSave(settingsForSave(options.settings, {
+      const savedSettings = await options.onSave(settingsForSave(options.settings, {
         cliCommand: cliCommand.value || "dida",
         autoSync: autoSync.checked,
         newTaskDate: newTaskDate.value === "none" ? "none" : "today",
         syncIntervalSeconds: Number(syncIntervalSeconds.value || 15),
         ranges
       }));
+      rebaseAfterSave(savedSettings);
       showMessage(t("settingsSaved"));
     } catch (error) {
       showMessage(t("settingsSaveFailed", { message: getRangeValidationMessage(error, t) }), 5000, "error");
@@ -270,7 +288,7 @@ function renderRange(
         ${renderProjectControl(range, state.projects, t)}
       </label>
     </div>
-    <div class="dida-sync-muted" data-field="targetProjectWarning" role="status" aria-live="polite" hidden></div>
+    <div class="dida-sync-range-warning" data-field="targetProjectWarning" role="status" aria-live="polite" hidden></div>
     <label class="dida-sync-toggle dida-sync-toggle--compact">
       <input type="checkbox" data-field="includeChildren" />
       <span>${t("includeChildDocuments")}</span>
