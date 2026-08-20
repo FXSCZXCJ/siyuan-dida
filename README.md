@@ -33,29 +33,49 @@ Repeat these steps on every computer that uses the plugin. The plugin stores res
 ## What syncs
 
 - An unchecked SiYuan Markdown todo creates a Dida task in its configured target list.
+- Every task created by the plugin has visible Dida task content containing `SiYuan-Block-ID: <block-id>`. This stable source marker lets the plugin reconnect the task to its SiYuan block after a known partial failure.
 - Editing the title of a bound, incomplete SiYuan todo updates its Dida title.
 - Completing a bound SiYuan todo completes its Dida task.
 - Completing a bound Dida task marks the matching SiYuan todo completed.
 - Todo nesting is preserved when the parent todo is also bound.
 
+Before creating unbound tasks, the plugin reads both incomplete and completed task snapshots from every configured Dida list. A unique source marker can restore a missing binding, update a changed SiYuan title in Dida, restore the parent relationship, and reconcile completion in either direction. This also prevents another task from being created after known failures such as a lost CLI response or a failed SiYuan attribute write.
+
+Recovery stops safely if the same source marker appears on multiple Dida tasks. If either the incomplete or completed snapshot is unavailable, the plugin does not recover or create unmatched, unbound tasks during that run. Already-bound tasks can still be updated or completed when their operation does not depend on the missing snapshot.
+
 ## Automatic sync
 
-Enable **Automatic sync** in plugin settings and select an interval of at least five seconds. Only one sync runs at a time; an overlapping trigger is skipped. The sync log records created, updated, completed, skipped, and failed items.
+Enable **Automatic sync** in plugin settings and select an interval of at least five seconds. Only one sync runs at a time on the current device; an overlapping trigger is skipped.
+
+The settings page includes a live status panel showing the current state, last finish time, and the latest counters. Use **Sync now** there to start a manual sync. Status summaries and logs are fully localized in Chinese and English and report scanned, created, recovered, updated, completed, written-back, skipped, and failed items.
+
+## Sync range safety
+
+Sync ranges in the same SiYuan notebook cannot cover the same document scope. The settings page rejects identical paths and parent/child overlaps when the parent range includes child documents. Sibling paths and equivalent paths in different notebooks remain valid.
+
+If an older saved configuration contains missing fields, duplicate ranges, or overlapping ranges, all manual, startup, and automatic sync is blocked until the configuration is corrected and saved. This avoids assigning a block to an ambiguous destination.
+
+Changing a range's target Dida list affects only newly created tasks. Existing bindings stay in their original Dida lists and are not migrated automatically; the settings page warns about this before saving.
 
 ## Data storage
 
-Stable plugin settings are stored under the workspace `conf/siyuan-dida/` directory. Sync logs and rotating cursor state are stored under `temp/siyuan-dida/`, outside SiYuan note data and data history. Logs retain the latest 20 runs. Version 1.1.12 automatically migrates the former `data/storage/petal/siyuan-dida/settings.json` file and removes it after the new files are written successfully.
+Data storage is unchanged in version 1.1.13. Stable plugin settings are stored under the workspace `conf/siyuan-dida/` directory. Sync logs and rotating cursor state are stored under `temp/siyuan-dida/`, outside SiYuan note data and data history. Logs retain the latest 20 runs. Version 1.1.12 and later automatically migrate the former `data/storage/petal/siyuan-dida/settings.json` file and remove it after the new files are written successfully.
 
 ## Troubleshooting
 
 - **Dida CLI is unavailable:** run `dida --version` in a terminal first. If it works there but not in SiYuan, enter the absolute executable path in settings and test again.
 - **No Dida lists appear:** authorize the CLI again using the [official guide](https://help.dida365.com/articles/7464976698707017728), then refresh lists.
 - **A task did not sync:** confirm that its notebook and path belong to a configured range, then review the plugin sync log.
+- **New tasks or recovery were blocked:** confirm both Dida snapshot requests are available, then run sync again. The block protects unbound todos from duplicate creation.
+- **Recovery reports an ambiguous source marker:** find the Dida tasks that share the displayed `SiYuan-Block-ID:` value and resolve the duplicate manually. The plugin will not choose one silently.
+- **Settings report an invalid configuration:** correct every missing, duplicate, or overlapping range and save before syncing again.
 - **Another computer does not work:** install and authorize the CLI separately on that computer. Do not copy CLI paths or authorization files between devices.
 
 ## Limits
 
 This MVP does not delete tasks, sync due dates or reminders, sync repeating tasks, synchronize Dida title edits back to SiYuan, or synchronize tables and database blocks. The new-task date setting affects only tasks created after the setting is saved; it never changes dates on existing Dida tasks.
+
+The Dida CLI does not provide a remote idempotency primitive for task creation. Do not run simultaneous initial syncs for the same unbound SiYuan todos on multiple devices. Cross-device exactly-once creation is not guaranteed; if duplicates are created, their matching source markers become ambiguous and the plugin stops recovery safely instead of choosing a task.
 
 ## Development
 
