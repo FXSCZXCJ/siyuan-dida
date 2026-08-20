@@ -269,7 +269,9 @@ export default class SiyuanDidaPlugin extends Plugin {
       const resolved = await resolveDidaCommand(getResolvedCliPathForCurrentDevice(this.settings) || this.settings.cliCommand || "dida");
       if (this.unloaded) return;
       this.settings = withResolvedCliPathForCurrentDevice(this.settings, resolved.command);
-      const didaGateway = new DidaCliGateway(new DidaCliClient(resolved.command));
+      const didaGateway = new DidaCliGateway(new DidaCliClient(resolved.command, {
+        cliVersion: resolved.version
+      }));
       const engine = new SyncEngine(new SiYuanRepository(), didaGateway, this.t);
       const result = await engine.sync({
         maxTasksPerRun: this.settings.maxTasksPerRun || DEFAULT_SETTINGS.maxTasksPerRun,

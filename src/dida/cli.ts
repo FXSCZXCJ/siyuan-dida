@@ -31,10 +31,13 @@ export interface DidaProject {
   name: string;
 }
 
-interface DidaCliClientOptions {
+export interface DidaCliClientOptions {
+  cliVersion?: string;
   now?: () => Date;
   clockSkewSeconds?: number;
   maxCompletedQueries?: number;
+  deadlineNow?: () => number;
+  completedSnapshotDeadlineMs?: number;
 }
 
 interface CompletedTaskInterval {
@@ -42,10 +45,13 @@ interface CompletedTaskInterval {
   endSecond: number;
 }
 
-const COMPLETED_TASK_RESULT_CAP = 200;
 const COMPLETED_TASK_LOWER_BOUND_SECOND = 0;
 const DEFAULT_COMPLETED_TASK_CLOCK_SKEW_SECONDS = 5 * 60;
-const DEFAULT_MAX_COMPLETED_QUERIES = 2_048;
+const DEFAULT_MAX_COMPLETED_QUERIES = 256;
+const DEFAULT_COMPLETED_SNAPSHOT_DEADLINE_MS = 120_000;
+const COMPLETED_SNAPSHOT_PROTOCOLS: Record<string, { resultLimit: number }> = {
+  "0.1.10": { resultLimit: 200 }
+};
 
 export const defaultRunner: CommandRunner = (command, args) =>
   new Promise((resolve, reject) => {
@@ -277,11 +283,24 @@ function parseJson<T>(stdout: string): T {
 }
 
 export class DidaCliClient {
+  private readonly runner: CommandRunner;
+  private readonly options: DidaCliClientOptions;
+
+  constructor(command: string, runner?: CommandRunner, options?: DidaCliClientOptions);
+  constructor(command: string, options?: DidaCliClientOptions);
   constructor(
     private readonly command: string,
-    private readonly runner: CommandRunner = defaultRunner,
-    private readonly options: DidaCliClientOptions = {}
-  ) {}
+    runnerOrOptions: CommandRunner | DidaCliClientOptions = defaultRunner,
+    options: DidaCliClientOptions = {}
+  ) {
+    if (typeof runnerOrOptions === "function") {
+      this.runner = runnerOrOptions;
+      this.options = options;
+    } else {
+      this.runner = defaultRunner;
+      this.options = runnerOrOptions;
+    }
+  }
 
   async testConnection(): Promise<string> {
     return readVersion(this.command, this.runner);
@@ -362,6 +381,7 @@ export class DidaCliClient {
   }
 
   async listCompletedTasks(projectIds: string[]): Promise<DidaTask[]> {
+    const protocol = completedSnapshotProtocol(this.options.cliVersion);
     const clockSkewSeconds = this.options.clockSkewSeconds
       ?? DEFAULT_COMPLETED_TASK_CLOCK_SKEW_SECONDS;
     const endSecond = Math.floor(
@@ -372,22 +392,36 @@ export class DidaCliClient {
     }
 
     const maxQueries = this.options.maxCompletedQueries ?? DEFAULT_MAX_COMPLETED_QUERIES;
+    const deadlineMs = this.options.completedSnapshotDeadlineMs
+      ?? DEFAULT_COMPLETED_SNAPSHOT_DEADLINE_MS;
+    const deadlineNow = this.options.deadlineNow ?? Date.now;
+    const startedAt = deadlineNow();
+    if (!Number.isFinite(startedAt)) {
+      throw new Error("Completed snapshot incomplete: invalid deadline clock");
+    }
     const intervals: CompletedTaskInterval[] = [{
       startSecond: COMPLETED_TASK_LOWER_BOUND_SECOND,
       endSecond
     }];
+    const requestedProjectIds = new Set(projectIds);
     const completedTasks = new Map<string, DidaTask>();
     let queryCount = 0;
 
     while (intervals.length > 0) {
+      assertCompletedSnapshotDeadline(deadlineNow, startedAt, deadlineMs);
       if (queryCount >= maxQueries) {
         throw new Error(`Completed snapshot incomplete: query budget of ${maxQueries} exhausted`);
       }
       const interval = intervals.pop()!;
       queryCount += 1;
-      const tasks = await this.listCompletedTaskInterval(projectIds, interval);
+      const tasks = await this.listCompletedTaskInterval(
+        projectIds,
+        requestedProjectIds,
+        interval
+      );
+      assertCompletedSnapshotDeadline(deadlineNow, startedAt, deadlineMs);
 
-      if (tasks.length >= COMPLETED_TASK_RESULT_CAP) {
+      if (tasks.length >= protocol.resultLimit) {
         const shards = splitCompletedTaskInterval(interval);
         if (!shards) {
           throw new Error(
@@ -408,6 +442,7 @@ export class DidaCliClient {
 
   private async listCompletedTaskInterval(
     projectIds: string[],
+    requestedProjectIds: ReadonlySet<string>,
     interval: CompletedTaskInterval
   ): Promise<DidaTask[]> {
     const args = [
@@ -428,6 +463,17 @@ export class DidaCliClient {
       throw new Error("Completed snapshot incomplete: CLI response is not an array");
     }
     for (const task of tasks) {
+      if (typeof task.id !== "string" || task.id.trim().length === 0) {
+        throw new Error("Completed snapshot incomplete: task has an invalid id");
+      }
+      if (typeof task.projectId !== "string" || task.projectId.trim().length === 0) {
+        throw new Error(`Completed snapshot incomplete: task ${task.id} has an invalid projectId`);
+      }
+      if (requestedProjectIds.size > 0 && !requestedProjectIds.has(task.projectId)) {
+        throw new Error(
+          `Completed snapshot incomplete: task ${task.projectId}/${task.id} is outside the requested projects`
+        );
+      }
       const completedAt = typeof task.completedTime === "string"
         ? Date.parse(task.completedTime)
         : Number.NaN;
@@ -442,6 +488,31 @@ export class DidaCliClient {
       }
     }
     return tasks;
+  }
+}
+
+function completedSnapshotProtocol(cliVersion: string | undefined): { resultLimit: number } {
+  const normalizedVersion = cliVersion?.trim().replace(/^v/i, "") ?? "";
+  const protocol = COMPLETED_SNAPSHOT_PROTOCOLS[normalizedVersion];
+  if (!protocol) {
+    const displayedVersion = cliVersion?.trim() || "missing";
+    throw new Error(
+      `Completed snapshot unsupported for dida CLI version ${displayedVersion}; verified version: 0.1.10`
+    );
+  }
+  return protocol;
+}
+
+function assertCompletedSnapshotDeadline(
+  deadlineNow: () => number,
+  startedAt: number,
+  deadlineMs: number
+): void {
+  const elapsedMs = deadlineNow() - startedAt;
+  if (!Number.isFinite(elapsedMs) || elapsedMs >= deadlineMs) {
+    throw new Error(
+      `Completed snapshot incomplete: wall-clock deadline of ${deadlineMs}ms exhausted`
+    );
   }
 }
 

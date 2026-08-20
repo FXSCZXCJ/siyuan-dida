@@ -20,7 +20,8 @@ const pluginMocks = vi.hoisted(() => ({
   recordSync: vi.fn(async () => []),
   engineSync: vi.fn(async () => undefined),
   engineConstructor: vi.fn(),
-  resolveDidaCommand: vi.fn(async () => ({ command: "dida", version: "test" }))
+  didaClientConstructor: vi.fn(),
+  resolveDidaCommand: vi.fn(async () => ({ command: "dida", version: "0.1.10" }))
 }));
 
 vi.mock("siyuan", () => ({
@@ -85,7 +86,11 @@ vi.mock("./core/syncEngine", () => ({
 
 vi.mock("./dida/cli", () => ({
   resolveDidaCommand: pluginMocks.resolveDidaCommand,
-  DidaCliClient: class {}
+  DidaCliClient: class {
+    constructor(...args: unknown[]) {
+      pluginMocks.didaClientConstructor(...args);
+    }
+  }
 }));
 
 import SiyuanDidaPlugin from "./index";
@@ -497,6 +502,10 @@ describe("sync status and plugin lifecycle", () => {
     } as never);
     await run;
 
+    expect(pluginMocks.didaClientConstructor).toHaveBeenCalledWith(
+      "dida",
+      { cliVersion: "0.1.10" }
+    );
     expect(transitions.at(-1)).toBe("success");
     expect(pluginMocks.panelOptions!.status.getSnapshot().latestResult?.recovered).toBe(1);
     expect(pluginMocks.topBarButton?.getAttribute("aria-label")).toContain("synced");

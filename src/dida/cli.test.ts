@@ -7,11 +7,17 @@ import {
   buildWindowsCmdInvocation,
   DidaCliClient,
   resolveDidaCommand,
-  resolveWindowsCmdShim
+  resolveWindowsCmdShim,
+  type DidaCliClientOptions
 } from "./cli";
 import { DidaCliGateway } from "./gateway";
 
 const fixedNow = () => new Date("2030-01-01T00:00:00Z");
+const completedOptions = (overrides: Partial<DidaCliClientOptions> = {}): DidaCliClientOptions => ({
+  cliVersion: "0.1.10",
+  now: fixedNow,
+  ...overrides
+});
 
 describe("resolveDidaCommand", () => {
   test("uses the configured command when it runs", async () => {
@@ -309,7 +315,7 @@ describe("DidaCliClient", () => {
           stderr: ""
         };
       },
-      { now: fixedNow }
+      completedOptions()
     );
 
     await expect(client.listCompletedTasks(["project-1", "project-2"])).resolves.toEqual([
@@ -332,7 +338,7 @@ describe("DidaCliClient", () => {
         ]);
         return { stdout: "[]", stderr: "" };
       },
-      { now: fixedNow }
+      completedOptions()
     );
 
     await expect(client.listCompletedTasks([])).resolves.toEqual([]);
@@ -364,7 +370,7 @@ describe("DidaCliClient", () => {
           stderr: ""
         };
       },
-      { now: fixedNow }
+      completedOptions()
     );
 
     const tasks = await client.listCompletedTasks(["project-1"]);
@@ -400,7 +406,7 @@ describe("DidaCliClient", () => {
           stderr: ""
         };
       },
-      { now: fixedNow }
+      completedOptions()
     );
 
     const tasks = await client.listCompletedTasks(["project-1"]);
@@ -425,7 +431,7 @@ describe("DidaCliClient", () => {
           stderr: ""
         };
       },
-      { now: fixedNow }
+      completedOptions()
     );
 
     await expect(client.listCompletedTasks(["project-1"])).resolves.toHaveLength(3);
@@ -445,7 +451,7 @@ describe("DidaCliClient", () => {
         stdout: JSON.stringify([{ id: "task-1", projectId: "project-1", completedTime }]),
         stderr: ""
       }),
-      { now: fixedNow }
+      completedOptions()
     );
 
     await expect(client.listCompletedTasks(["project-1"])).rejects.toThrow(/completed snapshot/i);
@@ -468,7 +474,10 @@ describe("DidaCliClient", () => {
           stderr: ""
         };
       },
-      { now: () => new Date("1970-01-01T00:00:01Z"), clockSkewSeconds: 0 }
+      completedOptions({
+        now: () => new Date("1970-01-01T00:00:01Z"),
+        clockSkewSeconds: 0
+      })
     );
 
     await expect(client.listCompletedTasks(["project-1"])).rejects.toThrow(/one-second|resolution/i);
@@ -490,7 +499,10 @@ describe("DidaCliClient", () => {
           stderr: ""
         };
       },
-      { now: () => new Date("1970-01-01T00:00:00Z"), clockSkewSeconds: 0 }
+      completedOptions({
+        now: () => new Date("1970-01-01T00:00:00Z"),
+        clockSkewSeconds: 0
+      })
     );
 
     await expect(client.listCompletedTasks(["project-1"])).rejects.toThrow(/one-second|resolution/i);
@@ -512,11 +524,92 @@ describe("DidaCliClient", () => {
           stderr: ""
         };
       },
-      { now: fixedNow, maxCompletedQueries: 2 }
+      completedOptions({ maxCompletedQueries: 2 })
     );
 
     await expect(client.listCompletedTasks(["project-1"])).rejects.toThrow(/query budget/i);
     expect(calls).toBe(2);
+  });
+
+  test("accepts a normalized verified CLI version for completed snapshots", async () => {
+    let calls = 0;
+    const client = new DidaCliClient(
+      "dida",
+      async () => {
+        calls += 1;
+        return { stdout: "[]", stderr: "" };
+      },
+      completedOptions({ cliVersion: "  v0.1.10\n" })
+    );
+
+    await expect(client.listCompletedTasks(["project-1"])).resolves.toEqual([]);
+    expect(calls).toBe(1);
+  });
+
+  test.each([undefined, "", "0.1.9", "0.1.11"])(
+    "rejects unsupported CLI version %j before requesting completed tasks",
+    async (cliVersion) => {
+      let calls = 0;
+      const client = new DidaCliClient(
+        "dida",
+        async () => {
+          calls += 1;
+          return { stdout: "[]", stderr: "" };
+        },
+        completedOptions({ cliVersion })
+      );
+
+      await expect(client.listCompletedTasks(["project-1"]))
+        .rejects.toThrow(/completed snapshot.*unsupported|unsupported.*completed snapshot/i);
+      expect(calls).toBe(0);
+    }
+  );
+
+  test.each([
+    ["missing id", { projectId: "project-1", completedTime: "2029-01-01T00:00:00Z" }],
+    ["empty id", { id: "  ", projectId: "project-1", completedTime: "2029-01-01T00:00:00Z" }],
+    ["missing projectId", { id: "task-2", completedTime: "2029-01-01T00:00:00Z" }],
+    ["empty projectId", { id: "task-2", projectId: " ", completedTime: "2029-01-01T00:00:00Z" }],
+    ["foreign projectId", { id: "task-2", projectId: "project-2", completedTime: "2029-01-01T00:00:00Z" }]
+  ])("rejects an unsafe completed snapshot containing a record with %s", async (_label, unsafeTask) => {
+    const client = new DidaCliClient(
+      "dida",
+      async () => ({
+        stdout: JSON.stringify([
+          completedTask("valid-task", "2029-01-01T00:00:00Z"),
+          unsafeTask
+        ]),
+        stderr: ""
+      }),
+      completedOptions()
+    );
+
+    await expect(client.listCompletedTasks(["project-1"]))
+      .rejects.toThrow(/completed snapshot.*invalid|completed snapshot.*project/i);
+  });
+
+  test("rejects when the completed snapshot wall-clock deadline is exhausted", async () => {
+    let calls = 0;
+    const clockReadings = [1_000, 1_000, 121_001];
+    const client = new DidaCliClient(
+      "dida",
+      async (_command, args) => {
+        calls += 1;
+        return {
+          stdout: JSON.stringify([
+            completedTask("task-1", flagValue(args, "--start-date"))
+          ]),
+          stderr: ""
+        };
+      },
+      completedOptions({
+        deadlineNow: () => clockReadings.shift() ?? 121_001,
+        completedSnapshotDeadlineMs: 120_000
+      })
+    );
+
+    await expect(client.listCompletedTasks(["project-1"])).rejects.toThrow(/deadline/i);
+    expect(calls).toBe(1);
   });
 });
 
@@ -574,7 +667,7 @@ describe("DidaCliGateway", () => {
           stderr: ""
         };
       },
-      { now: fixedNow }
+      completedOptions()
     );
     const gateway = new DidaCliGateway(client);
 
