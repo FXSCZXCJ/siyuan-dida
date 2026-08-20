@@ -85,6 +85,17 @@ function loadedSettings(kind: "duplicate" | "overlap"): PluginSettings {
   };
 }
 
+function loadedSettingsWithMissingField(
+  field: "notebookId" | "hpathPrefix" | "targetProjectId"
+): PluginSettings {
+  const settings = loadedSettings("overlap");
+  const range = { ...settings.ranges[0], [field]: "" };
+  return {
+    ...settings,
+    ranges: [range]
+  };
+}
+
 async function flushPromises() {
   await Promise.resolve();
   await Promise.resolve();
@@ -131,6 +142,40 @@ describe("loaded sync-range safety gate", () => {
       expect(pluginMocks.engineSync).not.toHaveBeenCalled();
       expect(pluginMocks.showMessage).toHaveBeenCalledWith(
         expect.stringContaining("Correct and save them in plugin settings before syncing."),
+        7000,
+        "error"
+      );
+    }
+  );
+
+  test.each([
+    ["notebookId", "Sync range 1 is missing a notebook."],
+    ["hpathPrefix", "Sync range 1 is missing a document path."],
+    ["targetProjectId", "Sync range 1 is missing a Dida list."]
+  ] as const)(
+    "retains and blocks a persisted range with missing %s",
+    async (field, validationMessage) => {
+      pluginMocks.loadedSettings = loadedSettingsWithMissingField(field);
+      const intervalSpy = vi.spyOn(window, "setInterval");
+      const timeoutSpy = vi.spyOn(window, "setTimeout");
+      const plugin = new SiyuanDidaPlugin({} as never);
+
+      await plugin.onload();
+
+      const retainedSettings = (plugin as unknown as { settings: PluginSettings }).settings;
+      expect(retainedSettings.ranges).toHaveLength(1);
+      expect(retainedSettings.ranges[0][field]).toBe("");
+      expect(pluginMocks.saveConfiguration.mock.calls[0][0].ranges).toHaveLength(1);
+      expect(pluginMocks.saveConfiguration.mock.calls[0][0].ranges[0][field]).toBe("");
+      expect(intervalSpy).not.toHaveBeenCalled();
+      expect(timeoutSpy).not.toHaveBeenCalled();
+
+      pluginMocks.commandCallback?.();
+      await flushPromises();
+
+      expect(pluginMocks.engineSync).not.toHaveBeenCalled();
+      expect(pluginMocks.showMessage).toHaveBeenCalledWith(
+        `Saved sync ranges are invalid: ${validationMessage} Correct and save them in plugin settings before syncing.`,
         7000,
         "error"
       );
