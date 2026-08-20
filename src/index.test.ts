@@ -17,7 +17,9 @@ const pluginMocks = vi.hoisted(() => ({
   saveConfiguration: vi.fn(async (_settings: PluginSettings) => undefined),
   saveRuntime: vi.fn(async (_settings: PluginSettings) => undefined),
   recordSync: vi.fn(async () => []),
-  engineSync: vi.fn(async () => undefined)
+  engineSync: vi.fn(async () => undefined),
+  engineConstructor: vi.fn(),
+  resolveDidaCommand: vi.fn(async () => ({ command: "dida", version: "test" }))
 }));
 
 vi.mock("siyuan", () => ({
@@ -65,12 +67,15 @@ vi.mock("./settings/workspaceStorage", () => ({
 
 vi.mock("./core/syncEngine", () => ({
   SyncEngine: class {
+    constructor() {
+      pluginMocks.engineConstructor();
+    }
     sync = pluginMocks.engineSync;
   }
 }));
 
 vi.mock("./dida/cli", () => ({
-  resolveDidaCommand: vi.fn(async () => ({ command: "dida", version: "test" })),
+  resolveDidaCommand: pluginMocks.resolveDidaCommand,
   DidaCliClient: class {}
 }));
 
@@ -485,5 +490,32 @@ describe("sync status and plugin lifecycle", () => {
 
     expect(clearTimeoutSpy).toHaveBeenCalled();
     expect(pluginMocks.panelOptions).toBeUndefined();
+  });
+
+  test("stops after deferred CLI discovery resolves when unloaded", async () => {
+    let resolveCommand!: (value: { command: string; version: string }) => void;
+    pluginMocks.resolveDidaCommand.mockImplementationOnce(
+      () => new Promise((resolve) => { resolveCommand = resolve; })
+    );
+    const plugin = new SiyuanDidaPlugin({} as never);
+    await plugin.onload();
+    plugin.openSetting();
+    await new Promise((resolve) => window.setTimeout(resolve, 0));
+
+    const status = pluginMocks.panelOptions!.status;
+    const run = pluginMocks.panelOptions!.onSyncNow();
+    await flushPromises();
+    expect(status.getSnapshot().state).toBe("syncing");
+    const snapshotAtUnload = status.getSnapshot();
+
+    plugin.onunload();
+    resolveCommand({ command: "/resolved/dida", version: "test" });
+    await run;
+
+    expect(pluginMocks.engineConstructor).not.toHaveBeenCalled();
+    expect(pluginMocks.engineSync).not.toHaveBeenCalled();
+    expect(pluginMocks.recordSync).not.toHaveBeenCalled();
+    expect(status.getSnapshot()).toBe(snapshotAtUnload);
+    expect((plugin as unknown as { syncRunning: boolean }).syncRunning).toBe(false);
   });
 });
