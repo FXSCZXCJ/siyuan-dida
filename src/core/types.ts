@@ -13,6 +13,12 @@ export interface SyncSettings {
   maxTasksPerRun: number;
   newTaskDate?: NewTaskDate;
   ranges: SyncRange[];
+  /**
+   * Epoch-second lower bound for the completed-tasks pull. When present, the
+   * engine runs an incremental snapshot from this watermark instead of a full
+   * baseline. Absent/0 means full baseline.
+   */
+  completedWatermarkSecond?: number;
 }
 
 export type NewTaskDate = "today" | "none";
@@ -42,6 +48,11 @@ export interface SyncResult {
   failures: Array<{ blockId?: string; message: string }>;
   startedAt: string;
   finishedAt: string;
+  /**
+   * Next completed-tasks watermark (epoch seconds) after this run, for
+   * incremental snapshots. Present when the completed pull succeeded.
+   */
+  completedWatermarkSecond?: number;
 }
 
 export interface SyncRangeResult {
@@ -98,7 +109,7 @@ export interface DidaTaskSnapshot {
 
 export interface DidaGateway {
   listIncompleteTasks(projectIds: string[]): Promise<DidaTaskSnapshot[]>;
-  listCompletedTasks(projectIds: string[]): Promise<DidaTaskSnapshot[]>;
+  listCompletedTasks(projectIds: string[], startSecond?: number): Promise<DidaTaskSnapshot[]>;
   createTask(projectId: string, title: string, options?: CreateDidaTaskOptions): Promise<{ id: string; projectId: string }>;
   updateTaskTitle(projectId: string, taskId: string, title: string): Promise<void>;
   setTaskParent(projectId: string, taskId: string, parentTaskId: string): Promise<void>;

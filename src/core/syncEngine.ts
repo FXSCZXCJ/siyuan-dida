@@ -129,11 +129,27 @@ export class SyncEngine {
     }
     let completedTaskKeys = new Set<string>();
     try {
-      const completedTasks = await this.dida.listCompletedTasks(projectIds);
+      // Incremental snapshot: pull only tasks completed since the last
+      // watermark instead of the full multi-year history. This drops the
+      // per-run Dida request count from dozens (date-range bisection over
+      // ~2000 completed tasks) to a single-window query, keeping a short
+      // sync interval within the Dida API rate limits.
+      //
+      // Trade-off: recovering bindings for tasks completed long ago via
+      // source markers only sees the recent window. Normal operation does not
+      // rely on that path (bindings live on block attrs); a full baseline
+      // (watermark cleared) covers history.
+      const watermarkSecond = normalizeWatermark(settings.completedWatermarkSecond);
+      const pullStartSecond = Math.floor(Date.now() / 1_000);
+      const completedTasks = await this.dida.listCompletedTasks(projectIds, watermarkSecond);
       completedTaskKeys = new Set(completedTasks.map(remoteTaskKey));
       for (const task of completedTasks) {
         indexTaskBySourceBlockId(recoveryContext, task);
       }
+      // Advance the watermark to when this pull started so tasks completed
+      // mid-pull are re-included next run (idempotent; already-synced blocks
+      // are skipped).
+      result.completedWatermarkSecond = pullStartSecond;
       addEvent(result, "debug", this.t("completedTasksLoaded", { count: completedTasks.length }));
     } catch (error) {
       recoveryContext.snapshotComplete = false;
@@ -606,6 +622,13 @@ function normalizeOffset(value: number | undefined): number {
     return 0;
   }
   return Math.max(0, Math.floor(value));
+}
+
+function normalizeWatermark(value: number | undefined): number {
+  if (typeof value !== "number" || !Number.isFinite(value) || value <= 0) {
+    return 0;
+  }
+  return Math.floor(value);
 }
 
 function uniqueBlocks(blocks: SiYuanTodoBlock[]): SiYuanTodoBlock[] {

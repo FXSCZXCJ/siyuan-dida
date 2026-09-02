@@ -21,6 +21,7 @@ export interface SettingsPanelOptions {
   onSyncNow(): void | Promise<void>;
   onSave(settings: PluginSettings): Promise<PluginSettings>;
   onClearLogs(): Promise<void>;
+  onRebuildBaseline?(): void | Promise<void>;
 }
 
 export interface SettingsPanelView {
@@ -81,8 +82,16 @@ export function buildSettingsPanel(options: SettingsPanelOptions): SettingsPanel
         </label>
         <label class="dida-sync-field">
           <span>${t("syncInterval")}</span>
-          <input class="b3-text-field" data-field="syncIntervalSeconds" type="number" min="5" />
+          <input class="b3-text-field" data-field="syncIntervalSeconds" type="number" min="10" />
         </label>
+        <div class="dida-sync-muted">${t("syncIntervalHint")}</div>
+        <div class="dida-sync-field">
+          <span>${t("completedWatermarkLabel")}</span>
+          <span class="dida-sync-muted" data-field="completedWatermark"></span>
+        </div>
+        <div class="dida-sync-actions">
+          <button class="b3-button b3-button--outline" data-action="rebuildBaseline">${t("rebuildBaseline")}</button>
+        </div>
         <label class="dida-sync-field">
           <span>${t("newTaskDate")}</span>
           <select class="b3-select fn__block" data-field="newTaskDate">
@@ -136,12 +145,20 @@ export function buildSettingsPanel(options: SettingsPanelOptions): SettingsPanel
   const newTaskDate = root.querySelector<HTMLSelectElement>('[data-field="newTaskDate"]')!;
   const rangesEl = root.querySelector<HTMLElement>('[data-field="ranges"]')!;
   const logs = root.querySelector<HTMLElement>('[data-field="logs"]')!;
+  const watermarkEl = root.querySelector<HTMLElement>('[data-field="completedWatermark"]')!;
 
   cliCommand.value = options.settings.cliCommand;
   autoSync.checked = options.settings.autoSync;
   syncIntervalSeconds.value = String(options.settings.syncIntervalSeconds);
   newTaskDate.value = options.settings.newTaskDate;
   logs.textContent = formatSyncLogs(options.settings.logs.slice(0, 10), t);
+  const renderWatermark = () => {
+    const watermark = options.settings.completedWatermarkSecond;
+    watermarkEl.textContent = typeof watermark === "number" && watermark > 0
+      ? new Date(watermark * 1000).toLocaleString(window.siyuan?.config?.lang ?? navigator.language)
+      : t("completedWatermarkNone");
+  };
+  renderWatermark();
 
   const renderRanges = () => {
     if (disposed) return;
@@ -163,6 +180,7 @@ export function buildSettingsPanel(options: SettingsPanelOptions): SettingsPanel
     autoSync.checked = savedSettings.autoSync;
     syncIntervalSeconds.value = String(savedSettings.syncIntervalSeconds);
     newTaskDate.value = savedSettings.newTaskDate;
+    renderWatermark();
     renderRanges();
   };
 
@@ -224,6 +242,19 @@ export function buildSettingsPanel(options: SettingsPanelOptions): SettingsPanel
     state.originalTargetProjectIds.set(range, "");
     state.ranges.push(range);
     renderRanges();
+  }, eventOptions);
+
+  root.querySelector('[data-action="rebuildBaseline"]')?.addEventListener("click", async () => {
+    if (!options.onRebuildBaseline) return;
+    try {
+      await options.onRebuildBaseline();
+      if (disposed) return;
+      showMessage(t("rebuildBaselineDone"));
+      renderWatermark();
+    } catch (error) {
+      if (disposed) return;
+      showMessage(t("syncFailed", { message: (error as Error).message }), 7000, "error");
+    }
   }, eventOptions);
 
   root.querySelector('[data-action="save"]')?.addEventListener("click", async () => {

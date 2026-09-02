@@ -23,6 +23,7 @@ import { getRangeValidationMessage, type RangeValidationError } from "./settings
 import { SiYuanRepository } from "./siyuan/repository";
 import { setSyncTooltip } from "./syncTooltip";
 import type { SyncResult } from "./core/types";
+import { createBackoffController, isRateLimitError, type BackoffController } from "./core/rateLimit";
 import { createTranslator, type Translate } from "./i18n";
 
 const LEGACY_STORAGE_NAME = "settings.json";
@@ -42,6 +43,7 @@ export default class SiyuanDidaPlugin extends Plugin {
   private status!: SyncStatusController;
   private statusTooltip = "";
   private rangeConfigurationError: RangeValidationError | undefined;
+  private backoff: BackoffController = createBackoffController();
   private unloaded = false;
 
   async onload() {
@@ -182,7 +184,8 @@ export default class SiyuanDidaPlugin extends Plugin {
           await this.storage.clearLogs();
           if (this.unloaded) return;
           this.settings.logs = [];
-        })
+        }),
+        onRebuildBaseline: () => this.rebuildCompletedBaseline()
       });
       this.settingsViews.add(view);
       mount.appendChild(view.element);
@@ -219,7 +222,12 @@ export default class SiyuanDidaPlugin extends Plugin {
     }
 
     const intervalMs = Math.max(5, this.settings.syncIntervalSeconds) * 1000;
-    this.syncTimer = window.setInterval(() => void this.runSync({ silentSkip: true }), intervalMs);
+    this.syncTimer = window.setInterval(() => {
+      if (this.backoff.isBackingOff()) {
+        return;
+      }
+      void this.runSync({ silentSkip: true });
+    }, intervalMs);
   }
 
   private async runSync(options: { silentSkip?: boolean } = {}) {
@@ -276,15 +284,24 @@ export default class SiyuanDidaPlugin extends Plugin {
       const result = await engine.sync({
         maxTasksPerRun: this.settings.maxTasksPerRun || DEFAULT_SETTINGS.maxTasksPerRun,
         newTaskDate: this.settings.newTaskDate,
-        ranges: this.settings.ranges
+        ranges: this.settings.ranges,
+        completedWatermarkSecond: this.settings.completedWatermarkSecond
       });
       if (this.unloaded) return;
+      if (typeof result.completedWatermarkSecond === "number") {
+        this.settings.completedWatermarkSecond = result.completedWatermarkSecond;
+      }
       this.settings.ranges = this.settings.ranges.map((range) => ({
         ...range,
         cursorOffset: result.rangeCursorOffsets[range.id] ?? range.cursorOffset ?? 0
       }));
       this.settings.logs = await this.storage.recordSync(this.settings, result);
       if (this.unloaded) return;
+      if (this.resultHasRateLimit(result)) {
+        this.applyRateLimitBackoff(result);
+        return;
+      }
+      this.backoff.onSuccess();
       this.publishStatus({
         state: result.failed > 0 ? "failed" : "success",
         latestResult: result,
@@ -296,6 +313,13 @@ export default class SiyuanDidaPlugin extends Plugin {
       }
     } catch (error) {
       if (this.unloaded) return;
+      if (isRateLimitError(error)) {
+        const result = createErrorSyncResult((error as Error).message);
+        this.settings.logs = await this.safeRecordSync(result);
+        this.applyRateLimitBackoff(result);
+        return;
+      }
+      this.backoff.onSuccess();
       const result = createErrorSyncResult((error as Error).message);
       this.publishStatus({
         state: "failed",
@@ -303,15 +327,46 @@ export default class SiyuanDidaPlugin extends Plugin {
         lastFinishedAt: result.finishedAt,
         message: (error as Error).message
       });
-      try {
-        this.settings.logs = await this.storage.recordSync(this.settings, result);
-      } catch {
-        // The live failure remains visible even when its log cannot be persisted.
-      }
+      this.settings.logs = await this.safeRecordSync(result);
       if (this.unloaded) return;
       if (!options.silentSkip) {
         showMessage(this.t("syncFailed", { message: (error as Error).message }), 7000, "error");
       }
+    }
+  }
+
+  async rebuildCompletedBaseline() {
+    if (this.unloaded) return;
+    await this.enqueueOperation(async () => {
+      if (this.unloaded) return;
+      this.settings.completedWatermarkSecond = undefined;
+      await this.storage.saveRuntime(this.settings);
+    });
+    await this.runSync();
+  }
+
+  private resultHasRateLimit(result: SyncResult): boolean {
+    return result.failures.some((failure) => isRateLimitError(failure.message))
+      || result.events.some((event) => isRateLimitError(event.message));
+  }
+
+  private applyRateLimitBackoff(result: SyncResult) {
+    this.backoff.onRateLimit();
+    const retrySeconds = Math.ceil(this.backoff.currentDelayMs() / 1000);
+    this.publishStatus({
+      state: "failed",
+      latestResult: result,
+      lastFinishedAt: result.finishedAt,
+      message: this.t("statusRateLimited", { seconds: retrySeconds })
+    });
+  }
+
+  private async safeRecordSync(result: SyncResult): Promise<SyncResult[]> {
+    try {
+      return await this.storage.recordSync(this.settings, result);
+    } catch {
+      // The live failure remains visible even when its log cannot be persisted.
+      return this.settings.logs;
     }
   }
 

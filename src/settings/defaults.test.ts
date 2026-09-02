@@ -203,4 +203,26 @@ describe("workspace storage shapes", () => {
     expect(merged.ranges[0].cursorOffset).toBe(7);
     expect(merged.logs).toEqual(current.logs);
   });
+
+  test("round-trips the completed watermark through runtime storage", () => {
+    const current = normalizeSettings({
+      ...DEFAULT_SETTINGS,
+      completedWatermarkSecond: 1_700_000_000,
+      ranges: []
+    });
+
+    const stored = splitSettingsForStorage(current);
+    expect(stored.runtime.completedWatermarkSecond).toBe(1_700_000_000);
+    expect(stored.configuration).not.toHaveProperty("completedWatermarkSecond");
+
+    const merged = mergeStoredSettings(stored.configuration, stored.runtime, []);
+    expect(merged.completedWatermarkSecond).toBe(1_700_000_000);
+  });
+
+  test("omits the watermark from runtime storage when unset", () => {
+    const stored = splitSettingsForStorage(normalizeSettings({ ...DEFAULT_SETTINGS, ranges: [] }));
+    expect(stored.runtime.completedWatermarkSecond).toBeUndefined();
+    const merged = mergeStoredSettings(stored.configuration, stored.runtime, []);
+    expect(merged.completedWatermarkSecond).toBeUndefined();
+  });
 });

@@ -399,7 +399,10 @@ export class DidaCliClient {
     await this.runner(this.command, ["task", "complete", projectId, taskId]);
   }
 
-  async listCompletedTasks(projectIds: string[]): Promise<DidaTask[]> {
+  async listCompletedTasks(
+    projectIds: string[],
+    startSecond = COMPLETED_TASK_LOWER_BOUND_SECOND
+  ): Promise<DidaTask[]> {
     const protocol = snapshotProtocol(this.options.cliVersion, "Completed");
     const endSecond = protocol.completedUpperBoundSecond;
 
@@ -412,7 +415,7 @@ export class DidaCliClient {
       throw new Error("Completed snapshot incomplete: invalid deadline clock");
     }
     const intervals: CompletedTaskInterval[] = [{
-      startSecond: COMPLETED_TASK_LOWER_BOUND_SECOND,
+      startSecond: Math.max(COMPLETED_TASK_LOWER_BOUND_SECOND, startSecond),
       endSecond
     }];
     const requestedProjectIds = new Set(projectIds);

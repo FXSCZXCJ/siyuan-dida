@@ -8,8 +8,8 @@ export class DidaCliGateway implements DidaGateway {
     return this.client.listIncompleteTasks(projectIds);
   }
 
-  listCompletedTasks(projectIds: string[]): Promise<DidaTaskSnapshot[]> {
-    return this.client.listCompletedTasks(projectIds);
+  listCompletedTasks(projectIds: string[], startSecond?: number): Promise<DidaTaskSnapshot[]> {
+    return this.client.listCompletedTasks(projectIds, startSecond);
   }
 
   createTask(projectId: string, title: string, options?: CreateDidaTaskOptions) {

@@ -89,6 +89,7 @@ class FakeDida implements DidaGateway {
   public incompleteTasks: DidaTaskSnapshot[] = [];
   public incompleteTaskCalls: string[][] = [];
   public completedTaskCalls: string[][] = [];
+  public completedTaskStartSeconds: Array<number | undefined> = [];
   public incompleteTaskError: Error | null = null;
   public completedTasks = new Set<string>();
   public completedTaskSnapshots: DidaTaskSnapshot[] = [];
@@ -104,8 +105,9 @@ class FakeDida implements DidaGateway {
     return [...this.incompleteTasks];
   }
 
-  async listCompletedTasks(projectIds: string[]) {
+  async listCompletedTasks(projectIds: string[], startSecond?: number) {
     this.completedTaskCalls.push([...projectIds]);
+    this.completedTaskStartSeconds.push(startSecond);
     if (this.completedTaskError) {
       throw this.completedTaskError;
     }
@@ -981,5 +983,39 @@ describe("SyncEngine", () => {
 
     expect(dida.incompleteTaskCalls).toEqual([["project-1", "project-2"]]);
     expect(dida.completedTaskCalls).toEqual([["project-1", "project-2"]]);
+  });
+
+  test("runs a full baseline and sets the watermark when no watermark is configured", async () => {
+    const siyuan = new FakeSiYuan([]);
+    const dida = new FakeDida();
+
+    const result = await new SyncEngine(siyuan, dida).sync(settings());
+
+    expect(dida.completedTaskStartSeconds).toEqual([0]);
+    expect(typeof result.completedWatermarkSecond).toBe("number");
+    expect(result.completedWatermarkSecond).toBeGreaterThan(0);
+  });
+
+  test("runs an incremental snapshot from the configured watermark", async () => {
+    const testSettings = settings();
+    testSettings.completedWatermarkSecond = 1_700_000_000;
+    const siyuan = new FakeSiYuan([]);
+    const dida = new FakeDida();
+
+    const result = await new SyncEngine(siyuan, dida).sync(testSettings);
+
+    expect(dida.completedTaskStartSeconds).toEqual([1_700_000_000]);
+    expect(typeof result.completedWatermarkSecond).toBe("number");
+  });
+
+  test("does not set a watermark when the completed snapshot fails (fail-closed)", async () => {
+    const siyuan = new FakeSiYuan([]);
+    const dida = new FakeDida();
+    dida.completedTaskError = new Error("boom");
+
+    const result = await new SyncEngine(siyuan, dida).sync(settings());
+
+    expect(result.completedWatermarkSecond).toBeUndefined();
+    expect(result.failed).toBeGreaterThan(0);
   });
 });

@@ -17,6 +17,8 @@ export interface PluginSettings {
   maxTasksPerRun: number;
   ranges: SyncRange[];
   logs: SyncResult[];
+  /** Epoch-second watermark for incremental completed-tasks snapshots. */
+  completedWatermarkSecond?: number;
 }
 
 export type StoredSyncRange = Omit<SyncRange, "cursorOffset">;
@@ -35,6 +37,7 @@ export interface PluginRuntimeState {
   resolvedCliPath: string;
   resolvedCliPaths: Record<string, string>;
   rangeCursorOffsets: Record<string, number>;
+  completedWatermarkSecond?: number;
 }
 
 export const DEFAULT_SETTINGS: PluginSettings = {
@@ -136,6 +139,7 @@ export function splitSettingsForStorage(settings: PluginSettings): {
     runtime: {
       resolvedCliPath: settings.resolvedCliPath,
       resolvedCliPaths: { ...settings.resolvedCliPaths },
+      completedWatermarkSecond: settings.completedWatermarkSecond,
       rangeCursorOffsets: Object.fromEntries(
         settings.ranges
           .filter((range) => typeof range.cursorOffset === "number")
@@ -158,6 +162,7 @@ export function mergeStoredSettings(
     ...configuration,
     resolvedCliPath: runtime?.resolvedCliPath ?? "",
     resolvedCliPaths: runtime?.resolvedCliPaths ?? {},
+    completedWatermarkSecond: runtime?.completedWatermarkSecond,
     ranges,
     logs
   });

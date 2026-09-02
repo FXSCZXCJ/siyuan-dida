@@ -114,7 +114,13 @@ const translations = {
     statusCountCompleted: "Completed {count}",
     statusCountWrittenBack: "Written back {count}",
     statusCountSkipped: "Skipped {count}",
-    statusCountFailed: "Failed {count}"
+    statusCountFailed: "Failed {count}",
+    statusRateLimited: "Dida rate limited; retrying in {seconds}s. Backing off automatically.",
+    rebuildBaseline: "Rebuild baseline",
+    rebuildBaselineDone: "Baseline rebuild started",
+    completedWatermarkLabel: "Incremental watermark",
+    completedWatermarkNone: "Not yet (next sync runs a full baseline)",
+    syncIntervalHint: "With incremental snapshots, short intervals (≥10s) stay within Dida rate limits."
   },
   "zh-CN": {
     saveSettings: "保存设置",
@@ -231,7 +237,13 @@ const translations = {
     statusCountCompleted: "完成 {count}",
     statusCountWrittenBack: "回写 {count}",
     statusCountSkipped: "跳过 {count}",
-    statusCountFailed: "失败 {count}"
+    statusCountFailed: "失败 {count}",
+    statusRateLimited: "滴答接口限流，{seconds} 秒后自动重试（已自动退避）。",
+    rebuildBaseline: "重建基线",
+    rebuildBaselineDone: "已开始重建基线",
+    completedWatermarkLabel: "增量水位",
+    completedWatermarkNone: "尚未建立（下次同步将执行全量基线）",
+    syncIntervalHint: "启用增量快照后，较短间隔（≥10 秒）也在滴答限额内。"
   }
 } as const;
 

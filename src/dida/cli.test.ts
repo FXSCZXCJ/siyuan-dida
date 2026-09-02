@@ -403,6 +403,27 @@ describe("DidaCliClient", () => {
     await expect(client.listCompletedTasks([])).resolves.toEqual([]);
   });
 
+  test("honours a startSecond lower bound for incremental completed pulls", async () => {
+    const client = new DidaCliClient(
+      "dida",
+      async (_command, args) => {
+        expect(args).toEqual([
+          "task",
+          "completed",
+          "--start-date",
+          "2023-11-14T22:13:20Z",
+          "--end-date",
+          "9999-12-31T23:59:59Z",
+          "--json"
+        ]);
+        return { stdout: "[]", stderr: "" };
+      },
+      completedOptions()
+    );
+
+    await expect(client.listCompletedTasks([], 1_700_000_000)).resolves.toEqual([]);
+  });
+
   test("splits a saturated completed-task range and merges more than 200 unique tasks", async () => {
     let calls = 0;
     const client = new DidaCliClient(

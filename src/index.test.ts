@@ -528,6 +528,84 @@ describe("sync status and plugin lifecycle", () => {
     expect(pluginMocks.showMessage).not.toHaveBeenCalled();
   });
 
+  test("backs off and reports rate limiting when a sync result hits the Dida quota", async () => {
+    pluginMocks.engineSync.mockResolvedValueOnce({
+      ...syncResult(0),
+      failed: 1,
+      failures: [{ message: 'DIDA API 错误 500: {"errorCode":"exceed_query_limit","errorMessage":"Query rate limit exceeded."}' }]
+    } as never);
+    const plugin = new SiyuanDidaPlugin({} as never);
+    await plugin.onload();
+    plugin.openSetting();
+    await new Promise((resolve) => window.setTimeout(resolve, 0));
+
+    await pluginMocks.panelOptions!.onSyncNow();
+
+    const snapshot = pluginMocks.panelOptions!.status.getSnapshot();
+    expect(snapshot.state).toBe("failed");
+    expect(snapshot.message).toContain("rate limited");
+    expect((plugin as unknown as { backoff: { isBackingOff(): boolean } }).backoff.isBackingOff()).toBe(true);
+  });
+
+  test("clears backoff after a successful sync", async () => {
+    pluginMocks.engineSync
+      .mockResolvedValueOnce({
+        ...syncResult(0),
+        failed: 1,
+        failures: [{ message: "exceed_query_limit" }]
+      } as never)
+      .mockResolvedValueOnce(syncResult(0) as never);
+    const plugin = new SiyuanDidaPlugin({} as never);
+    await plugin.onload();
+    plugin.openSetting();
+    await new Promise((resolve) => window.setTimeout(resolve, 0));
+
+    await pluginMocks.panelOptions!.onSyncNow();
+    expect((plugin as unknown as { backoff: { isBackingOff(): boolean } }).backoff.isBackingOff()).toBe(true);
+
+    await pluginMocks.panelOptions!.onSyncNow();
+    expect((plugin as unknown as { backoff: { isBackingOff(): boolean } }).backoff.isBackingOff()).toBe(false);
+    expect(pluginMocks.panelOptions!.status.getSnapshot().state).toBe("success");
+  });
+
+  test("passes the persisted completed watermark to the engine and stores the next one", async () => {
+    pluginMocks.loadedSettings!.completedWatermarkSecond = 1_700_000_000;
+    pluginMocks.engineSync.mockResolvedValueOnce({
+      ...syncResult(0),
+      completedWatermarkSecond: 1_700_000_100
+    } as never);
+    const plugin = new SiyuanDidaPlugin({} as never);
+    await plugin.onload();
+    plugin.openSetting();
+    await new Promise((resolve) => window.setTimeout(resolve, 0));
+
+    await pluginMocks.panelOptions!.onSyncNow();
+
+    expect(pluginMocks.engineSync).toHaveBeenCalledWith(
+      expect.objectContaining({ completedWatermarkSecond: 1_700_000_000 })
+    );
+    expect(pluginMocks.recordSync).toHaveBeenCalledWith(
+      expect.objectContaining({ completedWatermarkSecond: 1_700_000_100 }),
+      expect.anything()
+    );
+  });
+
+  test("rebuildCompletedBaseline clears the watermark and triggers a full sync", async () => {
+    pluginMocks.loadedSettings!.completedWatermarkSecond = 1_700_000_000;
+    pluginMocks.engineSync.mockResolvedValue(syncResult(0) as never);
+    const plugin = new SiyuanDidaPlugin({} as never);
+    await plugin.onload();
+
+    await plugin.rebuildCompletedBaseline();
+
+    expect(pluginMocks.saveRuntime).toHaveBeenCalledWith(
+      expect.objectContaining({ completedWatermarkSecond: undefined })
+    );
+    expect(pluginMocks.engineSync).toHaveBeenCalledWith(
+      expect.objectContaining({ completedWatermarkSecond: undefined })
+    );
+  });
+
   test("publishes a failed result even when persisting the error log also fails", async () => {
     pluginMocks.engineSync.mockRejectedValueOnce(new Error("offline"));
     pluginMocks.recordSync.mockRejectedValueOnce(new Error("log unavailable"));
