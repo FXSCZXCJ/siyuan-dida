@@ -123,6 +123,7 @@ export function buildSettingsPanel(options: SettingsPanelOptions): SettingsPanel
             <option value="none">${t("newTaskDateNone")}</option>
           </select>
         </label>
+        <div class="dida-sync-muted">${t("metadataSyntaxHint")}</div>
       </section>
     </div>
 

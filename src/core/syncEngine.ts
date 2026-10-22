@@ -2,8 +2,14 @@ import { localAllDayStart } from "./date";
 import { createTranslator, type Translate } from "../i18n";
 import { taskHash } from "./hash";
 import { buildTaskSourceContent, isSiYuanBlockId, parseSourceBlockId } from "./sourceMarker";
-import { parseTodoMarkdown } from "./todoParser";
+import {
+  parseTodoMarkdown,
+  parseTodoMetadata,
+  todoMetadataKey,
+  type TodoMetadata
+} from "./todoParser";
 import type {
+  CreateDidaTaskOptions,
   DidaGateway,
   DidaTaskSnapshot,
   SiYuanGateway,
@@ -12,13 +18,15 @@ import type {
   SyncRangeResult,
   SyncResult,
   SyncSettings,
-  SiYuanTodoBlock
+  SiYuanTodoBlock,
+  UpdateDidaTaskMetadataOptions
 } from "./types";
 
 const TASK_ID_ATTR = "custom-dida-task-id";
 const PROJECT_ID_ATTR = "custom-dida-project-id";
 const LAST_SYNC_ATTR = "custom-dida-last-sync";
 const LAST_HASH_ATTR = "custom-dida-last-hash";
+const LAST_METADATA_ATTR = "custom-dida-last-metadata";
 const SYNC_STATE_ATTR = "custom-dida-sync-state";
 const SYNC_STATE_SYNCED = "synced";
 const SYNC_STATE_COMPLETED_SYNCED = "completed-synced";
@@ -88,12 +96,51 @@ function binding(block: SiYuanTodoBlock): TaskBinding | null {
   return bindingFromAttrs(block.attrs);
 }
 
-function attrsFor(taskId: string, projectId: string, hash: string, syncState = SYNC_STATE_SYNCED): Record<string, string> {
+function storedMetadata(raw: string | undefined): TodoMetadata {
+  if (!raw) return {};
+  try {
+    const value = JSON.parse(raw) as TodoMetadata;
+    return value && typeof value === "object" ? value : {};
+  } catch {
+    return {};
+  }
+}
+
+function metadataUpdateOptions(
+  current: TodoMetadata,
+  previous: TodoMetadata
+): UpdateDidaTaskMetadataOptions | null {
+  const options: UpdateDidaTaskMetadataOptions = {};
+  let changed = false;
+  if (current.dueDate !== previous.dueDate) {
+    options.dueDate = current.dueDate ?? null;
+    options.allDay = current.allDay === true;
+    changed = true;
+  }
+  if (current.priority !== previous.priority) {
+    options.priority = current.priority ?? 0;
+    changed = true;
+  }
+  if (JSON.stringify(current.tags ?? []) !== JSON.stringify(previous.tags ?? [])) {
+    options.tags = current.tags ?? [];
+    changed = true;
+  }
+  return changed ? options : null;
+}
+
+function attrsFor(
+  taskId: string,
+  projectId: string,
+  hash: string,
+  syncState = SYNC_STATE_SYNCED,
+  metadataKey = ""
+): Record<string, string> {
   return {
     [TASK_ID_ATTR]: taskId,
     [PROJECT_ID_ATTR]: projectId,
     [LAST_SYNC_ATTR]: new Date().toISOString(),
     [LAST_HASH_ATTR]: hash,
+    [LAST_METADATA_ATTR]: metadataKey,
     [SYNC_STATE_ATTR]: syncState
   };
 }
@@ -286,21 +333,26 @@ export class SyncEngine {
         return;
       }
 
-      const currentHash = taskHash(parsed.title, parsed.checked);
+      const todo = parseTodoMetadata(parsed.title);
+      const taskTitle = todo.title || parsed.title;
+      const metadata = todo.metadata;
+      const metadataKey = todoMetadataKey(metadata);
+      const previousMetadata = storedMetadata(block.attrs[LAST_METADATA_ATTR]);
+      const currentHash = taskHash(taskTitle, parsed.checked, metadataKey);
       const existing = binding(block);
 
       if (!existing) {
         const recoveryMatches = recoveryContext.tasksBySourceBlockId.get(block.id) ?? [];
         if (!recoveryContext.snapshotComplete && recoveryMatches.length > 0) {
-          throw new Error(this.t("recoverySnapshotIncomplete", { title: parsed.title }));
+          throw new Error(this.t("recoverySnapshotIncomplete", { title: taskTitle }));
         }
         if (recoveryMatches.length > 1) {
-          throw new Error(this.t("ambiguousSourceMarker", { title: parsed.title }));
+          throw new Error(this.t("ambiguousSourceMarker", { title: taskTitle }));
         }
         if (recoveryMatches.length === 0 && parsed.checked) {
           result.skipped += 1;
           rangeResult.skipped += 1;
-          addEvent(result, "debug", this.t("skippedLegacyCompleted", { title: parsed.title }), {
+          addEvent(result, "debug", this.t("skippedLegacyCompleted", { title: taskTitle }), {
             blockId: block.id,
             rangeId: rangeResult.rangeId
           });
@@ -310,7 +362,7 @@ export class SyncEngine {
         if (parent.hasParent && !parent.binding) {
           result.skipped += 1;
           rangeResult.skipped += 1;
-          addEvent(result, "debug", this.t("skippedUnboundChild", { title: parsed.title }), {
+          addEvent(result, "debug", this.t("skippedUnboundChild", { title: taskTitle }), {
             blockId: block.id,
             rangeId: rangeResult.rangeId
           });
@@ -320,16 +372,27 @@ export class SyncEngine {
           const recovered = recoveryMatches[0];
           if (parent.binding && parent.binding.projectId !== recovered.projectId) {
             throw new Error(this.t("parentProjectMismatch", {
-              title: parsed.title,
+              title: taskTitle,
               parentProjectId: parent.binding.projectId,
               childProjectId: recovered.projectId
             }));
           }
-          if (recovered.title !== parsed.title) {
-            await this.writeIfLive(dryRun, () => this.dida.updateTaskTitle(recovered.projectId, recovered.id, parsed.title));
+          let recoveredChanged = recovered.title !== taskTitle;
+          if (recoveredChanged) {
+            await this.writeIfLive(dryRun, () => this.dida.updateTaskTitle(recovered.projectId, recovered.id, taskTitle));
+          }
+          const recoveredMetadataUpdate = metadataUpdateOptions(metadata, previousMetadata);
+          if (recoveredMetadataUpdate) {
+            await this.writeIfLive(
+              dryRun,
+              () => this.dida.updateTaskMetadata(recovered.projectId, recovered.id, recoveredMetadataUpdate)
+            );
+            recoveredChanged = true;
+          }
+          if (recoveredChanged) {
             result.updated += 1;
             rangeResult.updated += 1;
-            addEvent(result, "info", this.t("taskUpdated", { title: parsed.title }), {
+            addEvent(result, "info", this.t("taskUpdated", { title: taskTitle }), {
               blockId: block.id,
               rangeId: rangeResult.rangeId
             });
@@ -349,8 +412,9 @@ export class SyncEngine {
                 attrsFor(
                   recovered.id,
                   recovered.projectId,
-                  taskHash(parsed.title, true),
-                  SYNC_STATE_COMPLETED_SYNCED
+                  taskHash(taskTitle, true, metadataKey),
+                  SYNC_STATE_COMPLETED_SYNCED,
+                  metadataKey
                 )
               );
             });
@@ -359,11 +423,11 @@ export class SyncEngine {
             rangeResult.recovered = (rangeResult.recovered ?? 0) + 1;
             result.writtenBack += 1;
             rangeResult.writtenBack += 1;
-            addEvent(result, "info", this.t("taskBindingRecovered", { title: parsed.title }), {
+            addEvent(result, "info", this.t("taskBindingRecovered", { title: taskTitle }), {
               blockId: block.id,
               rangeId: rangeResult.rangeId
             });
-            addEvent(result, "info", this.t("didaCompletionWrittenBack", { title: parsed.title }), {
+            addEvent(result, "info", this.t("didaCompletionWrittenBack", { title: taskTitle }), {
               blockId: block.id,
               rangeId: rangeResult.rangeId
             });
@@ -374,7 +438,7 @@ export class SyncEngine {
               await this.writeIfLive(dryRun, () => this.dida.completeTask(recovered.projectId, recovered.id));
               result.completed += 1;
               rangeResult.completed += 1;
-              addEvent(result, "info", this.t("siyuanCompletionSynced", { title: parsed.title }), {
+              addEvent(result, "info", this.t("siyuanCompletionSynced", { title: taskTitle }), {
                 blockId: block.id,
                 rangeId: rangeResult.rangeId
               });
@@ -383,13 +447,13 @@ export class SyncEngine {
               dryRun,
               () => this.siyuan.setBlockAttrs(
                 block.id,
-                attrsFor(recovered.id, recovered.projectId, currentHash, SYNC_STATE_COMPLETED_SYNCED)
+                attrsFor(recovered.id, recovered.projectId, currentHash, SYNC_STATE_COMPLETED_SYNCED, metadataKey)
               )
             );
             context.knownBindings.set(block.id, { taskId: recovered.id, projectId: recovered.projectId });
             result.recovered = (result.recovered ?? 0) + 1;
             rangeResult.recovered = (rangeResult.recovered ?? 0) + 1;
-            addEvent(result, "info", this.t("taskBindingRecovered", { title: parsed.title }), {
+            addEvent(result, "info", this.t("taskBindingRecovered", { title: taskTitle }), {
               blockId: block.id,
               rangeId: rangeResult.rangeId
             });
@@ -397,12 +461,12 @@ export class SyncEngine {
           }
           await this.writeIfLive(
             dryRun,
-            () => this.siyuan.setBlockAttrs(block.id, attrsFor(recovered.id, recovered.projectId, currentHash))
+            () => this.siyuan.setBlockAttrs(block.id, attrsFor(recovered.id, recovered.projectId, currentHash, SYNC_STATE_SYNCED, metadataKey))
           );
           context.knownBindings.set(block.id, { taskId: recovered.id, projectId: recovered.projectId });
           result.recovered = (result.recovered ?? 0) + 1;
           rangeResult.recovered = (rangeResult.recovered ?? 0) + 1;
-          addEvent(result, "info", this.t("taskBindingRecovered", { title: parsed.title }), {
+          addEvent(result, "info", this.t("taskBindingRecovered", { title: taskTitle }), {
             blockId: block.id,
             rangeId: rangeResult.rangeId
           });
@@ -410,37 +474,41 @@ export class SyncEngine {
         }
         if (parent.binding && parent.binding.projectId !== targetProjectId) {
           throw new Error(this.t("parentProjectMismatch", {
-            title: parsed.title,
+            title: taskTitle,
             parentProjectId: parent.binding.projectId,
             childProjectId: targetProjectId
           }));
         }
         if (!recoveryContext.snapshotComplete) {
-          throw new Error(this.t("taskCreationBlocked", { title: parsed.title }));
+          throw new Error(this.t("taskCreationBlocked", { title: taskTitle }));
         }
         if (recoveryContext.creationAttemptedBlockIds.has(block.id)) {
-          throw new Error(this.t("taskCreationOutcomeUnknown", { title: parsed.title }));
+          throw new Error(this.t("taskCreationOutcomeUnknown", { title: taskTitle }));
         }
         recoveryContext.creationAttemptedBlockIds.add(block.id);
         const sourceContent = buildTaskSourceContent(this.t("sourceContent"), block.id);
+        const createOptions: CreateDidaTaskOptions = { content: sourceContent };
+        if (metadata.dueDate) {
+          createOptions.dueDate = metadata.dueDate;
+          createOptions.allDay = metadata.allDay === true;
+        } else if (newTaskDate === "today") {
+          createOptions.allDay = true;
+          createOptions.startDate = localAllDayStart();
+        }
+        if (metadata.priority !== undefined) createOptions.priority = metadata.priority;
+        if (metadata.tags && metadata.tags.length > 0) createOptions.tags = metadata.tags;
         const created = dryRun
           ? { id: `preview-${block.id}`, projectId: targetProjectId }
-          : await this.dida.createTask(
-              targetProjectId,
-              parsed.title,
-              newTaskDate === "today"
-                ? { content: sourceContent, allDay: true, startDate: localAllDayStart() }
-                : { content: sourceContent }
-            );
+          : await this.dida.createTask(targetProjectId, taskTitle, createOptions);
         indexTaskBySourceBlockId(recoveryContext, {
           id: created.id,
           projectId: created.projectId,
-          title: parsed.title,
+          title: taskTitle,
           content: sourceContent
         });
         result.created += 1;
         rangeResult.created += 1;
-        addEvent(result, "info", this.t("taskCreated", { title: parsed.title }), {
+        addEvent(result, "info", this.t("taskCreated", { title: taskTitle }), {
           blockId: block.id,
           rangeId: rangeResult.rangeId
         });
@@ -452,7 +520,7 @@ export class SyncEngine {
         }
         await this.writeIfLive(
           dryRun,
-          () => this.siyuan.setBlockAttrs(block.id, attrsFor(created.id, created.projectId, currentHash))
+          () => this.siyuan.setBlockAttrs(block.id, attrsFor(created.id, created.projectId, currentHash, SYNC_STATE_SYNCED, metadataKey))
         );
         context.knownBindings.set(block.id, { taskId: created.id, projectId: created.projectId });
         return;
@@ -466,12 +534,12 @@ export class SyncEngine {
           await this.siyuan.markBlockCompleted(block.id);
           await this.siyuan.setBlockAttrs(
             block.id,
-            attrsFor(existing.taskId, existing.projectId, taskHash(parsed.title, true), SYNC_STATE_COMPLETED_SYNCED)
+            attrsFor(existing.taskId, existing.projectId, taskHash(taskTitle, true, metadataKey), SYNC_STATE_COMPLETED_SYNCED, metadataKey)
           );
         });
         result.writtenBack += 1;
         rangeResult.writtenBack += 1;
-        addEvent(result, "info", this.t("didaCompletionWrittenBack", { title: parsed.title }), { blockId: block.id, rangeId: rangeResult.rangeId });
+        addEvent(result, "info", this.t("didaCompletionWrittenBack", { title: taskTitle }), { blockId: block.id, rangeId: rangeResult.rangeId });
         return;
       }
 
@@ -481,17 +549,17 @@ export class SyncEngine {
             dryRun,
             () => this.siyuan.setBlockAttrs(
               block.id,
-              attrsFor(existing.taskId, existing.projectId, currentHash, SYNC_STATE_COMPLETED_SYNCED)
+              attrsFor(existing.taskId, existing.projectId, currentHash, SYNC_STATE_COMPLETED_SYNCED, metadataKey)
             )
           );
-          addEvent(result, "debug", this.t("completedTaskArchived", { title: parsed.title }), {
+          addEvent(result, "debug", this.t("completedTaskArchived", { title: taskTitle }), {
             blockId: block.id,
             rangeId: rangeResult.rangeId
           });
         }
         result.skipped += 1;
         rangeResult.skipped += 1;
-        addEvent(result, "debug", this.t("skippedUnchanged", { title: parsed.title }), {
+        addEvent(result, "debug", this.t("skippedUnchanged", { title: taskTitle }), {
           blockId: block.id,
           rangeId: rangeResult.rangeId
         });
@@ -504,27 +572,34 @@ export class SyncEngine {
           dryRun,
           () => this.siyuan.setBlockAttrs(
             block.id,
-            attrsFor(existing.taskId, existing.projectId, currentHash, SYNC_STATE_COMPLETED_SYNCED)
+            attrsFor(existing.taskId, existing.projectId, currentHash, SYNC_STATE_COMPLETED_SYNCED, metadataKey)
           )
         );
         result.completed += 1;
         rangeResult.completed += 1;
-        addEvent(result, "info", this.t("siyuanCompletionSynced", { title: parsed.title }), { blockId: block.id, rangeId: rangeResult.rangeId });
+        addEvent(result, "info", this.t("siyuanCompletionSynced", { title: taskTitle }), { blockId: block.id, rangeId: rangeResult.rangeId });
         return;
       }
 
       if (block.attrs[LAST_HASH_ATTR] !== currentHash) {
         await this.writeIfLive(
           dryRun,
-          () => this.dida.updateTaskTitle(existing.projectId, existing.taskId, parsed.title)
+          () => this.dida.updateTaskTitle(existing.projectId, existing.taskId, taskTitle)
         );
+        const metadataUpdate = metadataUpdateOptions(metadata, previousMetadata);
+        if (metadataUpdate) {
+          await this.writeIfLive(
+            dryRun,
+            () => this.dida.updateTaskMetadata(existing.projectId, existing.taskId, metadataUpdate)
+          );
+        }
         await this.writeIfLive(
           dryRun,
-          () => this.siyuan.setBlockAttrs(block.id, attrsFor(existing.taskId, existing.projectId, currentHash))
+          () => this.siyuan.setBlockAttrs(block.id, attrsFor(existing.taskId, existing.projectId, currentHash, SYNC_STATE_SYNCED, metadataKey))
         );
         result.updated += 1;
         rangeResult.updated += 1;
-        addEvent(result, "info", this.t("taskUpdated", { title: parsed.title }), { blockId: block.id, rangeId: rangeResult.rangeId });
+        addEvent(result, "info", this.t("taskUpdated", { title: taskTitle }), { blockId: block.id, rangeId: rangeResult.rangeId });
       }
     } catch (error) {
       result.failed += 1;

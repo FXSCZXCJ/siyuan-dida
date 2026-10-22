@@ -9,7 +9,8 @@ import type {
   SiYuanGateway,
   SyncRange,
   SyncSettings,
-  SiYuanTodoBlock
+  SiYuanTodoBlock,
+  UpdateDidaTaskMetadataOptions
 } from "./types";
 
 function settings(): SyncSettings {
@@ -85,6 +86,11 @@ class FakeDida implements DidaGateway {
   public created: Array<{ projectId: string; title: string; options?: CreateDidaTaskOptions }> = [];
   public completed: Array<{ projectId: string; taskId: string }> = [];
   public updated: Array<{ projectId: string; taskId: string; title: string }> = [];
+  public metadataUpdates: Array<{
+    projectId: string;
+    taskId: string;
+    options: UpdateDidaTaskMetadataOptions;
+  }> = [];
   public parents: Array<{ projectId: string; taskId: string; parentTaskId: string }> = [];
   public incompleteTasks: DidaTaskSnapshot[] = [];
   public incompleteTaskCalls: string[][] = [];
@@ -139,6 +145,14 @@ class FakeDida implements DidaGateway {
 
   async updateTaskTitle(projectId: string, taskId: string, title: string) {
     this.updated.push({ projectId, taskId, title });
+  }
+
+  async updateTaskMetadata(
+    projectId: string,
+    taskId: string,
+    options: UpdateDidaTaskMetadataOptions
+  ): Promise<void> {
+    this.metadataUpdates.push({ projectId, taskId, options });
   }
 
   async setTaskParent(projectId: string, taskId: string, parentTaskId: string) {
@@ -266,6 +280,63 @@ describe("SyncEngine", () => {
         }
       }
     ]);
+  });
+
+  test("maps due date, priority, and tags when creating a task", async () => {
+    const siyuan = new FakeSiYuan([
+      block({ markdown: "- [ ] 发布版本 @due(2026-11-02 18:30) !p5 @tag(work,紧急)" })
+    ]);
+    const dida = new FakeDida();
+
+    const result = await new SyncEngine(siyuan, dida).sync(settings());
+
+    expect(result.created).toBe(1);
+    expect(dida.created[0]).toMatchObject({
+      title: "发布版本",
+      options: {
+        content: "来源：思源笔记\nSiYuan-Block-ID: block-1",
+        allDay: false,
+        priority: 5,
+        tags: ["work", "紧急"]
+      }
+    });
+    expect(dida.created[0].options?.dueDate).toMatch(/^2026-11-02T18:30:00[+-]\d{4}$/);
+    expect(siyuan.attrs[0].attrs["custom-dida-last-metadata"]).toContain('"priority":5');
+  });
+
+  test("clears metadata fields removed from the SiYuan title", async () => {
+    const previousMetadata = JSON.stringify({
+      dueDate: "2026-11-03T00:00:00+0800",
+      allDay: true,
+      priority: 3,
+      tags: ["work"]
+    });
+    const siyuan = new FakeSiYuan([
+      block({
+        markdown: "- [ ] 发布版本",
+        attrs: {
+          "custom-dida-task-id": "task-1",
+          "custom-dida-project-id": "project-1",
+          "custom-dida-last-hash": taskHash("发布版本", false, previousMetadata),
+          "custom-dida-last-metadata": previousMetadata
+        }
+      })
+    ]);
+    const dida = new FakeDida();
+
+    await new SyncEngine(siyuan, dida).sync(settings());
+
+    expect(dida.metadataUpdates).toEqual([{
+      projectId: "project-1",
+      taskId: "task-1",
+      options: {
+        dueDate: null,
+        allDay: false,
+        priority: 0,
+        tags: []
+      }
+    }]);
+    expect(siyuan.attrs[0].attrs["custom-dida-last-metadata"]).toBe("");
   });
 
   test("creates new child todos under their newly created Dida parent task", async () => {

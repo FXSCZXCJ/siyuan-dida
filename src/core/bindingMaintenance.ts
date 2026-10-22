@@ -13,6 +13,7 @@ const TASK_ID_ATTR = "custom-dida-task-id";
 const PROJECT_ID_ATTR = "custom-dida-project-id";
 const LAST_SYNC_ATTR = "custom-dida-last-sync";
 const LAST_HASH_ATTR = "custom-dida-last-hash";
+const LAST_METADATA_ATTR = "custom-dida-last-metadata";
 const SYNC_STATE_ATTR = "custom-dida-sync-state";
 const BINDING_PAGE_SIZE = 500;
 
@@ -128,6 +129,7 @@ export class BindingMaintenance {
         [PROJECT_ID_ATTR]: "",
         [LAST_SYNC_ATTR]: "",
         [LAST_HASH_ATTR]: "",
+        [LAST_METADATA_ATTR]: "",
         [SYNC_STATE_ATTR]: ""
       });
       return;

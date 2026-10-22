@@ -102,6 +102,16 @@ export interface CreateDidaTaskOptions {
   content?: string;
   allDay?: boolean;
   startDate?: string;
+  dueDate?: string;
+  priority?: number;
+  tags?: string[];
+}
+
+export interface UpdateDidaTaskMetadataOptions {
+  dueDate?: string | null;
+  allDay?: boolean;
+  priority?: number;
+  tags?: string[];
 }
 
 export interface DidaTaskSnapshot {
@@ -117,6 +127,11 @@ export interface DidaGateway {
   createTask(projectId: string, title: string, options?: CreateDidaTaskOptions): Promise<{ id: string; projectId: string }>;
   getTask(projectId: string, taskId: string): Promise<DidaTaskSnapshot & { status?: number } | null>;
   updateTaskTitle(projectId: string, taskId: string, title: string): Promise<void>;
+  updateTaskMetadata(
+    projectId: string,
+    taskId: string,
+    options: UpdateDidaTaskMetadataOptions
+  ): Promise<void>;
   setTaskParent(projectId: string, taskId: string, parentTaskId: string): Promise<void>;
   completeTask(projectId: string, taskId: string): Promise<void>;
   deleteTask(projectId: string, taskId: string): Promise<void>;

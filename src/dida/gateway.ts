@@ -1,4 +1,9 @@
-import type { CreateDidaTaskOptions, DidaGateway, DidaTaskSnapshot } from "../core/types";
+import type {
+  CreateDidaTaskOptions,
+  DidaGateway,
+  DidaTaskSnapshot,
+  UpdateDidaTaskMetadataOptions
+} from "../core/types";
 import { DidaCliClient } from "./cli";
 
 export class DidaCliGateway implements DidaGateway {
@@ -22,6 +27,14 @@ export class DidaCliGateway implements DidaGateway {
 
   async updateTaskTitle(projectId: string, taskId: string, title: string): Promise<void> {
     await this.client.updateTaskTitle(projectId, taskId, title);
+  }
+
+  async updateTaskMetadata(
+    projectId: string,
+    taskId: string,
+    options: UpdateDidaTaskMetadataOptions
+  ): Promise<void> {
+    await this.client.updateTaskMetadata(projectId, taskId, options);
   }
 
   async setTaskParent(projectId: string, taskId: string, parentTaskId: string): Promise<void> {

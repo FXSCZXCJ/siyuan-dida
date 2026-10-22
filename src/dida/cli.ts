@@ -2,7 +2,11 @@ import { execFile } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join, sep } from "node:path";
-import type { CreateDidaTaskOptions, DidaTaskSnapshot } from "../core/types";
+import type {
+  CreateDidaTaskOptions,
+  DidaTaskSnapshot,
+  UpdateDidaTaskMetadataOptions
+} from "../core/types";
 
 export interface CommandResult {
   stdout: string;
@@ -382,6 +386,15 @@ export class DidaCliClient {
     if (options.startDate) {
       args.push("--start-date", options.startDate);
     }
+    if (options.dueDate) {
+      args.push("--due-date", options.dueDate);
+    }
+    if (options.priority !== undefined) {
+      args.push("--priority", String(options.priority));
+    }
+    if (options.tags && options.tags.length > 0) {
+      args.push("--tags", options.tags.join(","));
+    }
     args.push("--json");
     const result = await this.runner(this.command, args);
     return parseJson<DidaTask>(result.stdout);
@@ -401,6 +414,36 @@ export class DidaCliClient {
       "--json"
     ]);
     return parseJson<DidaTask>(result.stdout);
+  }
+
+  async updateTaskMetadata(
+    projectId: string,
+    taskId: string,
+    options: UpdateDidaTaskMetadataOptions
+  ): Promise<void> {
+    const args = [
+      "task",
+      "update",
+      taskId,
+      "--id",
+      taskId,
+      "--project",
+      projectId
+    ];
+    if (options.dueDate !== undefined) {
+      args.push("--due-date", options.dueDate === null ? "null" : options.dueDate);
+    }
+    if (options.allDay) {
+      args.push("--all-day");
+    }
+    if (options.priority !== undefined) {
+      args.push("--priority", String(options.priority));
+    }
+    if (options.tags !== undefined) {
+      args.push("--tags", options.tags.join(","));
+    }
+    args.push("--json");
+    await this.runner(this.command, args);
   }
 
   async setTaskParent(projectId: string, taskId: string, parentTaskId: string): Promise<DidaTask> {

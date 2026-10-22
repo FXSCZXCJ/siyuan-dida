@@ -344,6 +344,66 @@ describe("DidaCliClient", () => {
     });
   });
 
+  test("creates a task with due date, priority, and tags", async () => {
+    const client = new DidaCliClient("dida", async (_command, args) => {
+      expect(args).toEqual([
+        "task",
+        "create",
+        "--title",
+        "发布版本",
+        "--project",
+        "project-1",
+        "--content",
+        "来源：思源笔记",
+        "--all-day",
+        "--due-date",
+        "2026-11-02T00:00:00+0800",
+        "--priority",
+        "5",
+        "--tags",
+        "work,紧急",
+        "--json"
+      ]);
+      return { stdout: JSON.stringify({ id: "task-1", projectId: "project-1" }), stderr: "" };
+    });
+
+    await expect(client.createTask("project-1", "发布版本", {
+      content: "来源：思源笔记",
+      allDay: true,
+      dueDate: "2026-11-02T00:00:00+0800",
+      priority: 5,
+      tags: ["work", "紧急"]
+    })).resolves.toMatchObject({ id: "task-1", projectId: "project-1" });
+  });
+
+  test("updates task metadata and clears removed fields", async () => {
+    const client = new DidaCliClient("dida", async (_command, args) => {
+      expect(args).toEqual([
+        "task",
+        "update",
+        "task-1",
+        "--id",
+        "task-1",
+        "--project",
+        "project-1",
+        "--due-date",
+        "null",
+        "--priority",
+        "0",
+        "--tags",
+        "",
+        "--json"
+      ]);
+      return { stdout: JSON.stringify({ id: "task-1", projectId: "project-1" }), stderr: "" };
+    });
+
+    await expect(client.updateTaskMetadata("project-1", "task-1", {
+      dueDate: null,
+      priority: 0,
+      tags: []
+    })).resolves.toBeUndefined();
+  });
+
   test("gets a task by project and task ID", async () => {
     const client = new DidaCliClient("dida", async (_command, args) => {
       expect(args).toEqual(["task", "get", "project-1", "task-1", "--json"]);
