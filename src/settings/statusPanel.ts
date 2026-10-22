@@ -1,7 +1,7 @@
 import type { SyncResult } from "../core/types";
 import type { Translate, TranslationKey } from "../i18n";
 
-export type SyncStatusState = "pending" | "syncing" | "success" | "failed";
+export type SyncStatusState = "pending" | "syncing" | "previewing" | "preview" | "success" | "failed";
 
 export interface SyncStatusSnapshot {
   state: SyncStatusState;
@@ -48,6 +48,7 @@ export interface StatusPanelOptions {
   t: Translate;
   locale?: string;
   onSyncNow(): void | Promise<void>;
+  onPreview?(): void | Promise<void>;
 }
 
 export interface StatusPanelView {
@@ -78,7 +79,10 @@ export function buildStatusPanel(options: StatusPanelOptions): StatusPanelView {
         <div class="dida-sync-section__title">${options.t("syncStatusTitle")}</div>
         <div class="dida-sync-status__state" data-field="syncStatus"></div>
       </div>
-      <button class="b3-button" data-action="syncNow" type="button">${options.t("syncNow")}</button>
+      <div class="dida-sync-actions">
+        <button class="b3-button b3-button--outline" data-action="preview" type="button">${options.t("previewSync")}</button>
+        <button class="b3-button" data-action="syncNow" type="button">${options.t("syncNow")}</button>
+      </div>
     </div>
     <div class="dida-sync-status__meta">
       <span>${options.t("statusLastFinished")}</span>
@@ -93,16 +97,23 @@ export function buildStatusPanel(options: StatusPanelOptions): StatusPanelView {
   const counterContainer = root.querySelector<HTMLElement>('[data-field="statusCounters"]')!;
   const message = root.querySelector<HTMLElement>('[data-field="statusMessage"]')!;
   const button = root.querySelector<HTMLButtonElement>('[data-action="syncNow"]')!;
+  const previewButton = root.querySelector<HTMLButtonElement>('[data-action="preview"]')!;
+  if (!options.onPreview) {
+    previewButton.hidden = true;
+  }
 
   const render = (snapshot: SyncStatusSnapshot) => {
     state.textContent = options.t(statusLabel(snapshot.state));
     state.dataset.state = snapshot.state;
-    const syncing = snapshot.state === "syncing";
-    button.disabled = syncing;
-    if (syncing) {
+    const busy = snapshot.state === "syncing" || snapshot.state === "previewing";
+    button.disabled = busy;
+    previewButton.disabled = busy;
+    if (busy) {
       button.setAttribute("aria-busy", "true");
+      previewButton.setAttribute("aria-busy", "true");
     } else {
       button.removeAttribute("aria-busy");
+      previewButton.removeAttribute("aria-busy");
     }
 
     if (snapshot.lastFinishedAt) {
@@ -131,6 +142,8 @@ export function buildStatusPanel(options: StatusPanelOptions): StatusPanelView {
 
   const onClick = () => void options.onSyncNow();
   button.addEventListener("click", onClick);
+  const onPreviewClick = () => void options.onPreview?.();
+  previewButton.addEventListener("click", onPreviewClick);
   const unsubscribe = options.status.subscribe(render);
   let destroyed = false;
 
@@ -141,6 +154,7 @@ export function buildStatusPanel(options: StatusPanelOptions): StatusPanelView {
       destroyed = true;
       unsubscribe();
       button.removeEventListener("click", onClick);
+      previewButton.removeEventListener("click", onPreviewClick);
     }
   };
 }
@@ -148,6 +162,8 @@ export function buildStatusPanel(options: StatusPanelOptions): StatusPanelView {
 function statusLabel(state: SyncStatusState): TranslationKey {
   switch (state) {
     case "syncing": return "statusStateSyncing";
+    case "previewing": return "statusStatePreviewing";
+    case "preview": return "statusStatePreview";
     case "success": return "statusStateSuccess";
     case "failed": return "statusStateFailed";
     default: return "statusStatePending";

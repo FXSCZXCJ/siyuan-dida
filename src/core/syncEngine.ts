@@ -40,7 +40,7 @@ interface RecoveryContext {
   snapshotComplete: boolean;
 }
 
-function emptyResult(): SyncResult {
+function emptyResult(dryRun = false): SyncResult {
   const now = new Date().toISOString();
   return {
     created: 0,
@@ -56,7 +56,8 @@ function emptyResult(): SyncResult {
     events: [],
     failures: [],
     startedAt: now,
-    finishedAt: now
+    finishedAt: now,
+    ...(dryRun ? { dryRun: true } : {})
   };
 }
 
@@ -105,9 +106,17 @@ export class SyncEngine {
   ) {}
 
   async sync(settings: SyncSettings): Promise<SyncResult> {
-    const result = emptyResult();
+    const dryRun = settings.dryRun === true;
+    const result = emptyResult(dryRun);
     const projectIds = [...new Set(settings.ranges.map((range) => range.targetProjectId).filter(Boolean))];
-    addEvent(result, "info", this.t("syncStarted", { ranges: settings.ranges.length, max: settings.maxTasksPerRun }));
+    addEvent(
+      result,
+      "info",
+      this.t(dryRun ? "previewStarted" : "syncStarted", {
+        ranges: settings.ranges.length,
+        max: settings.maxTasksPerRun
+      })
+    );
     const recoveryContext: RecoveryContext = {
       tasksBySourceBlockId: new Map(),
       indexedTasksByKey: new Map(),
@@ -227,7 +236,8 @@ export class SyncEngine {
           rangeResult,
           context,
           recoveryContext,
-          settings.newTaskDate ?? "today"
+          settings.newTaskDate ?? "today",
+          dryRun
         );
       }
       addEvent(
@@ -242,14 +252,15 @@ export class SyncEngine {
     addEvent(
       result,
       result.failed > 0 ? "warn" : "info",
-      this.t("syncFinished", {
+      this.t(dryRun ? "previewFinished" : "syncFinished", {
         scanned: result.scanned,
         created: result.created,
         recovered: result.recovered ?? 0,
         updated: result.updated,
         completed: result.completed,
         writtenBack: result.writtenBack,
-        failed: result.failed
+        failed: result.failed,
+        skipped: result.skipped
       })
     );
     return result;
@@ -263,7 +274,8 @@ export class SyncEngine {
     rangeResult: SyncRangeResult,
     context: RangeSyncContext,
     recoveryContext: RecoveryContext,
-    newTaskDate: "today" | "none"
+    newTaskDate: "today" | "none",
+    dryRun: boolean
   ) {
     try {
       const parsed = parseTodoMarkdown(block.markdown);
@@ -314,7 +326,7 @@ export class SyncEngine {
             }));
           }
           if (recovered.title !== parsed.title) {
-            await this.dida.updateTaskTitle(recovered.projectId, recovered.id, parsed.title);
+            await this.writeIfLive(dryRun, () => this.dida.updateTaskTitle(recovered.projectId, recovered.id, parsed.title));
             result.updated += 1;
             rangeResult.updated += 1;
             addEvent(result, "info", this.t("taskUpdated", { title: parsed.title }), {
@@ -323,20 +335,25 @@ export class SyncEngine {
             });
           }
           if (parent.binding) {
-            await this.dida.setTaskParent(recovered.projectId, recovered.id, parent.binding.taskId);
+            await this.writeIfLive(
+              dryRun,
+              () => this.dida.setTaskParent(recovered.projectId, recovered.id, parent.binding!.taskId)
+            );
           }
           const recoveredIsCompleted = completedTaskKeys.has(remoteTaskKey(recovered));
           if (recoveredIsCompleted && !parsed.checked) {
-            await this.siyuan.markBlockCompleted(block.id);
-            await this.siyuan.setBlockAttrs(
-              block.id,
-              attrsFor(
-                recovered.id,
-                recovered.projectId,
-                taskHash(parsed.title, true),
-                SYNC_STATE_COMPLETED_SYNCED
-              )
-            );
+            await this.writeIfLive(dryRun, async () => {
+              await this.siyuan.markBlockCompleted(block.id);
+              await this.siyuan.setBlockAttrs(
+                block.id,
+                attrsFor(
+                  recovered.id,
+                  recovered.projectId,
+                  taskHash(parsed.title, true),
+                  SYNC_STATE_COMPLETED_SYNCED
+                )
+              );
+            });
             context.knownBindings.set(block.id, { taskId: recovered.id, projectId: recovered.projectId });
             result.recovered = (result.recovered ?? 0) + 1;
             rangeResult.recovered = (rangeResult.recovered ?? 0) + 1;
@@ -354,7 +371,7 @@ export class SyncEngine {
           }
           if (parsed.checked) {
             if (!recoveredIsCompleted) {
-              await this.dida.completeTask(recovered.projectId, recovered.id);
+              await this.writeIfLive(dryRun, () => this.dida.completeTask(recovered.projectId, recovered.id));
               result.completed += 1;
               rangeResult.completed += 1;
               addEvent(result, "info", this.t("siyuanCompletionSynced", { title: parsed.title }), {
@@ -362,9 +379,12 @@ export class SyncEngine {
                 rangeId: rangeResult.rangeId
               });
             }
-            await this.siyuan.setBlockAttrs(
-              block.id,
-              attrsFor(recovered.id, recovered.projectId, currentHash, SYNC_STATE_COMPLETED_SYNCED)
+            await this.writeIfLive(
+              dryRun,
+              () => this.siyuan.setBlockAttrs(
+                block.id,
+                attrsFor(recovered.id, recovered.projectId, currentHash, SYNC_STATE_COMPLETED_SYNCED)
+              )
             );
             context.knownBindings.set(block.id, { taskId: recovered.id, projectId: recovered.projectId });
             result.recovered = (result.recovered ?? 0) + 1;
@@ -375,7 +395,10 @@ export class SyncEngine {
             });
             return;
           }
-          await this.siyuan.setBlockAttrs(block.id, attrsFor(recovered.id, recovered.projectId, currentHash));
+          await this.writeIfLive(
+            dryRun,
+            () => this.siyuan.setBlockAttrs(block.id, attrsFor(recovered.id, recovered.projectId, currentHash))
+          );
           context.knownBindings.set(block.id, { taskId: recovered.id, projectId: recovered.projectId });
           result.recovered = (result.recovered ?? 0) + 1;
           rangeResult.recovered = (rangeResult.recovered ?? 0) + 1;
@@ -400,13 +423,15 @@ export class SyncEngine {
         }
         recoveryContext.creationAttemptedBlockIds.add(block.id);
         const sourceContent = buildTaskSourceContent(this.t("sourceContent"), block.id);
-        const created = await this.dida.createTask(
-          targetProjectId,
-          parsed.title,
-          newTaskDate === "today"
-            ? { content: sourceContent, allDay: true, startDate: localAllDayStart() }
-            : { content: sourceContent }
-        );
+        const created = dryRun
+          ? { id: `preview-${block.id}`, projectId: targetProjectId }
+          : await this.dida.createTask(
+              targetProjectId,
+              parsed.title,
+              newTaskDate === "today"
+                ? { content: sourceContent, allDay: true, startDate: localAllDayStart() }
+                : { content: sourceContent }
+            );
         indexTaskBySourceBlockId(recoveryContext, {
           id: created.id,
           projectId: created.projectId,
@@ -420,9 +445,15 @@ export class SyncEngine {
           rangeId: rangeResult.rangeId
         });
         if (parent.binding) {
-          await this.dida.setTaskParent(created.projectId, created.id, parent.binding.taskId);
+          await this.writeIfLive(
+            dryRun,
+            () => this.dida.setTaskParent(created.projectId, created.id, parent.binding!.taskId)
+          );
         }
-        await this.siyuan.setBlockAttrs(block.id, attrsFor(created.id, created.projectId, currentHash));
+        await this.writeIfLive(
+          dryRun,
+          () => this.siyuan.setBlockAttrs(block.id, attrsFor(created.id, created.projectId, currentHash))
+        );
         context.knownBindings.set(block.id, { taskId: created.id, projectId: created.projectId });
         return;
       }
@@ -431,8 +462,13 @@ export class SyncEngine {
         !parsed.checked
         && completedTaskKeys.has(remoteTaskKey({ id: existing.taskId, projectId: existing.projectId }))
       ) {
-        await this.siyuan.markBlockCompleted(block.id);
-        await this.siyuan.setBlockAttrs(block.id, attrsFor(existing.taskId, existing.projectId, taskHash(parsed.title, true), SYNC_STATE_COMPLETED_SYNCED));
+        await this.writeIfLive(dryRun, async () => {
+          await this.siyuan.markBlockCompleted(block.id);
+          await this.siyuan.setBlockAttrs(
+            block.id,
+            attrsFor(existing.taskId, existing.projectId, taskHash(parsed.title, true), SYNC_STATE_COMPLETED_SYNCED)
+          );
+        });
         result.writtenBack += 1;
         rangeResult.writtenBack += 1;
         addEvent(result, "info", this.t("didaCompletionWrittenBack", { title: parsed.title }), { blockId: block.id, rangeId: rangeResult.rangeId });
@@ -441,7 +477,13 @@ export class SyncEngine {
 
       if (block.attrs[LAST_HASH_ATTR] === currentHash) {
         if (parsed.checked && block.attrs[SYNC_STATE_ATTR] !== SYNC_STATE_COMPLETED_SYNCED) {
-          await this.siyuan.setBlockAttrs(block.id, attrsFor(existing.taskId, existing.projectId, currentHash, SYNC_STATE_COMPLETED_SYNCED));
+          await this.writeIfLive(
+            dryRun,
+            () => this.siyuan.setBlockAttrs(
+              block.id,
+              attrsFor(existing.taskId, existing.projectId, currentHash, SYNC_STATE_COMPLETED_SYNCED)
+            )
+          );
           addEvent(result, "debug", this.t("completedTaskArchived", { title: parsed.title }), {
             blockId: block.id,
             rangeId: rangeResult.rangeId
@@ -457,8 +499,14 @@ export class SyncEngine {
       }
 
       if (parsed.checked) {
-        await this.dida.completeTask(existing.projectId, existing.taskId);
-        await this.siyuan.setBlockAttrs(block.id, attrsFor(existing.taskId, existing.projectId, currentHash, SYNC_STATE_COMPLETED_SYNCED));
+        await this.writeIfLive(dryRun, () => this.dida.completeTask(existing.projectId, existing.taskId));
+        await this.writeIfLive(
+          dryRun,
+          () => this.siyuan.setBlockAttrs(
+            block.id,
+            attrsFor(existing.taskId, existing.projectId, currentHash, SYNC_STATE_COMPLETED_SYNCED)
+          )
+        );
         result.completed += 1;
         rangeResult.completed += 1;
         addEvent(result, "info", this.t("siyuanCompletionSynced", { title: parsed.title }), { blockId: block.id, rangeId: rangeResult.rangeId });
@@ -466,8 +514,14 @@ export class SyncEngine {
       }
 
       if (block.attrs[LAST_HASH_ATTR] !== currentHash) {
-        await this.dida.updateTaskTitle(existing.projectId, existing.taskId, parsed.title);
-        await this.siyuan.setBlockAttrs(block.id, attrsFor(existing.taskId, existing.projectId, currentHash));
+        await this.writeIfLive(
+          dryRun,
+          () => this.dida.updateTaskTitle(existing.projectId, existing.taskId, parsed.title)
+        );
+        await this.writeIfLive(
+          dryRun,
+          () => this.siyuan.setBlockAttrs(block.id, attrsFor(existing.taskId, existing.projectId, currentHash))
+        );
         result.updated += 1;
         rangeResult.updated += 1;
         addEvent(result, "info", this.t("taskUpdated", { title: parsed.title }), { blockId: block.id, rangeId: rangeResult.rangeId });
@@ -505,6 +559,12 @@ export class SyncEngine {
       rotatingCount: rotatingBlocks.length,
       rotatingLimit
     };
+  }
+
+  private async writeIfLive(dryRun: boolean, operation: () => Promise<void>): Promise<void> {
+    if (!dryRun) {
+      await operation();
+    }
   }
 
   private async resolveParentBinding(block: SiYuanTodoBlock, context: RangeSyncContext): Promise<{ hasParent: boolean; binding?: TaskBinding }> {

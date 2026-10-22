@@ -61,6 +61,8 @@ The settings page includes a live status panel showing the current state, last f
 
 The Dida CLI section also shows whether the detected CLI version is supported. **Copy diagnostics** creates a token-free report with the plugin version, platform, CLI command/version, compatibility result, sync-range count, and last sync status for easier troubleshooting.
 
+The status panel also provides **Preview sync**. A preview reads both sides and calculates the planned creations, updates, completions, and write-backs without changing Dida or SiYuan, saving a sync log, advancing cursors, or updating the completed-task watermark.
+
 ## Sync range safety
 
 Sync ranges in the same SiYuan notebook cannot cover the same document scope. The settings page rejects identical paths and parent/child overlaps when the parent range includes child documents. Sibling paths and equivalent paths in different notebooks remain valid.

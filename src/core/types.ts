@@ -13,6 +13,8 @@ export interface SyncSettings {
   maxTasksPerRun: number;
   newTaskDate?: NewTaskDate;
   ranges: SyncRange[];
+  /** When true, all write operations are skipped and counters describe planned work. */
+  dryRun?: boolean;
   /**
    * Epoch-second lower bound for the completed-tasks pull. When present, the
    * engine runs an incremental snapshot from this watermark instead of a full
@@ -53,6 +55,8 @@ export interface SyncResult {
    * incremental snapshots. Present when the completed pull succeeded.
    */
   completedWatermarkSecond?: number;
+  /** True when this result came from a read-only preview. */
+  dryRun?: boolean;
 }
 
 export interface SyncRangeResult {

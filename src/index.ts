@@ -161,6 +161,7 @@ export default class SiyuanDidaPlugin extends Plugin {
         t: this.t,
         status: this.status,
         onSyncNow: () => this.runSync(),
+        onPreview: () => this.runSync({ dryRun: true }),
         onSave: (settings) => this.enqueueOperation(async () => {
           if (this.unloaded) return this.settings;
           const previousSettings = this.settings;
@@ -230,7 +231,7 @@ export default class SiyuanDidaPlugin extends Plugin {
     }, intervalMs);
   }
 
-  private async runSync(options: { silentSkip?: boolean } = {}) {
+  private async runSync(options: { silentSkip?: boolean; dryRun?: boolean } = {}) {
     if (this.unloaded) return;
     if (this.rangeConfigurationError) {
       this.publishStatus(this.invalidConfigurationStatus(this.rangeConfigurationError));
@@ -262,8 +263,8 @@ export default class SiyuanDidaPlugin extends Plugin {
     try {
       this.publishStatus({
         ...this.status.getSnapshot(),
-        state: "syncing",
-        message: undefined
+        state: options.dryRun ? "previewing" : "syncing",
+        message: options.dryRun ? this.t("previewRunning") : undefined
       });
       await this.enqueueOperation(() => this.executeSync(options));
     } finally {
@@ -271,7 +272,8 @@ export default class SiyuanDidaPlugin extends Plugin {
     }
   }
 
-  private async executeSync(options: { silentSkip?: boolean }) {
+  private async executeSync(options: { silentSkip?: boolean; dryRun?: boolean }) {
+    const preview = options.dryRun === true;
     try {
       if (this.unloaded) return;
       const resolved = await resolveDidaCommand(getResolvedCliPathForCurrentDevice(this.settings) || this.settings.cliCommand || "dida");
@@ -285,9 +287,34 @@ export default class SiyuanDidaPlugin extends Plugin {
         maxTasksPerRun: this.settings.maxTasksPerRun || DEFAULT_SETTINGS.maxTasksPerRun,
         newTaskDate: this.settings.newTaskDate,
         ranges: this.settings.ranges,
-        completedWatermarkSecond: this.settings.completedWatermarkSecond
+        completedWatermarkSecond: this.settings.completedWatermarkSecond,
+        dryRun: preview
       });
       if (this.unloaded) return;
+      if (preview) {
+        if (this.resultHasRateLimit(result)) {
+          this.applyRateLimitBackoff(result);
+          return;
+        }
+        this.publishStatus({
+          state: result.failed > 0 ? "failed" : "preview",
+          latestResult: result,
+          lastFinishedAt: result.finishedAt,
+          message: result.failed > 0 ? result.failures[0]?.message : this.t("previewNoChanges")
+        });
+        if (!options.silentSkip) {
+          if (result.failed > 0) {
+            showMessage(
+              this.t("previewFailed", { message: result.failures[0]?.message ?? "unknown error" }),
+              7000,
+              "error"
+            );
+          } else {
+            showMessage(this.t("previewComplete", { summary: summarizeSyncLog(result, this.t) }));
+          }
+        }
+        return;
+      }
       if (typeof result.completedWatermarkSecond === "number") {
         this.settings.completedWatermarkSecond = result.completedWatermarkSecond;
       }
@@ -314,23 +341,33 @@ export default class SiyuanDidaPlugin extends Plugin {
     } catch (error) {
       if (this.unloaded) return;
       if (isRateLimitError(error)) {
-        const result = createErrorSyncResult((error as Error).message);
-        this.settings.logs = await this.safeRecordSync(result);
+        const result = createErrorSyncResult((error as Error).message, preview);
+        if (!preview) {
+          this.settings.logs = await this.safeRecordSync(result);
+        }
         this.applyRateLimitBackoff(result);
         return;
       }
-      this.backoff.onSuccess();
-      const result = createErrorSyncResult((error as Error).message);
+      if (!preview) {
+        this.backoff.onSuccess();
+      }
+      const result = createErrorSyncResult((error as Error).message, preview);
       this.publishStatus({
         state: "failed",
         latestResult: result,
         lastFinishedAt: result.finishedAt,
         message: (error as Error).message
       });
-      this.settings.logs = await this.safeRecordSync(result);
+      if (!preview) {
+        this.settings.logs = await this.safeRecordSync(result);
+      }
       if (this.unloaded) return;
       if (!options.silentSkip) {
-        showMessage(this.t("syncFailed", { message: (error as Error).message }), 7000, "error");
+        showMessage(
+          this.t(preview ? "previewFailed" : "syncFailed", { message: (error as Error).message }),
+          7000,
+          "error"
+        );
       }
     }
   }
@@ -394,8 +431,10 @@ export default class SiyuanDidaPlugin extends Plugin {
       return this.t("configurationInvalidStatus");
     }
     if (snapshot.state === "syncing") return this.t("statusSyncing");
+    if (snapshot.state === "previewing") return this.t("statusPreviewing");
     if (snapshot.state === "pending" || !snapshot.lastFinishedAt) return this.t("syncPending");
     const time = new Date(snapshot.lastFinishedAt).toLocaleTimeString();
+    if (snapshot.state === "preview") return this.t("statusPreviewReady", { time });
     return snapshot.state === "failed"
       ? this.t("statusFailed", { time })
       : this.t("statusSynced", { time });
@@ -440,7 +479,7 @@ function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
 
-function createErrorSyncResult(message: string): SyncResult {
+function createErrorSyncResult(message: string, dryRun = false): SyncResult {
   const now = new Date().toISOString();
   return {
     created: 0,
@@ -456,6 +495,7 @@ function createErrorSyncResult(message: string): SyncResult {
     events: [{ time: now, level: "error", message }],
     failures: [{ message }],
     startedAt: now,
-    finishedAt: now
+    finishedAt: now,
+    ...(dryRun ? { dryRun: true } : {})
   };
 }

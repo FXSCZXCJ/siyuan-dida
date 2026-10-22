@@ -26,6 +26,7 @@ export interface SettingsPanelOptions {
   t: Translate;
   status: SyncStatusController;
   onSyncNow(): void | Promise<void>;
+  onPreview?(): void | Promise<void>;
   onSave(settings: PluginSettings): Promise<PluginSettings>;
   onClearLogs(): Promise<void>;
   onRebuildBaseline?(): void | Promise<void>;
@@ -149,7 +150,8 @@ export function buildSettingsPanel(options: SettingsPanelOptions): SettingsPanel
     status: options.status,
     t,
     locale: window.siyuan?.config?.lang ?? navigator.language,
-    onSyncNow: options.onSyncNow
+    onSyncNow: options.onSyncNow,
+    onPreview: options.onPreview
   });
   root.querySelector(".dida-sync-summary")!.after(statusView.element);
 

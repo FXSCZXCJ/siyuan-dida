@@ -511,6 +511,39 @@ describe("sync status and plugin lifecycle", () => {
     expect(pluginMocks.topBarButton?.getAttribute("aria-label")).toContain("synced");
   });
 
+  test("runs a read-only preview without recording logs or advancing cursors", async () => {
+    pluginMocks.engineSync.mockResolvedValueOnce({
+      ...syncResult(99),
+      created: 2,
+      dryRun: true
+    } as never);
+    const plugin = new SiyuanDidaPlugin({} as never);
+    await plugin.onload();
+    plugin.onLayoutReady();
+    plugin.openSetting();
+    await new Promise((resolve) => window.setTimeout(resolve, 0));
+    const cursorBefore = (plugin as unknown as { settings: PluginSettings }).settings.ranges[0].cursorOffset;
+
+    const transitions: string[] = [];
+    pluginMocks.panelOptions!.status.subscribe((snapshot) => transitions.push(snapshot.state));
+    await pluginMocks.panelOptions!.onPreview!();
+
+    expect(transitions).toContain("previewing");
+    expect(pluginMocks.engineSync).toHaveBeenCalledWith(
+      expect.objectContaining({ dryRun: true, completedWatermarkSecond: undefined })
+    );
+    expect(pluginMocks.recordSync).not.toHaveBeenCalled();
+    expect(pluginMocks.panelOptions!.status.getSnapshot()).toMatchObject({
+      state: "preview",
+      latestResult: { dryRun: true, created: 2 },
+      message: "Preview only; no changes were written."
+    });
+    expect(pluginMocks.showMessage).toHaveBeenCalledWith(
+      expect.stringContaining("No changes were written")
+    );
+    expect((plugin as unknown as { settings: PluginSettings }).settings.ranges[0].cursorOffset).toBe(cursorBefore);
+  });
+
   test("publishes caught errors while silent sync suppresses messages", async () => {
     pluginMocks.engineSync.mockRejectedValueOnce(new Error("offline"));
     const plugin = new SiyuanDidaPlugin({} as never);

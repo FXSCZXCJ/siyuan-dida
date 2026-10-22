@@ -83,6 +83,8 @@ describe("buildStatusPanel", () => {
   test.each([
     [{ state: "pending" } as SyncStatusSnapshot, "Pending"],
     [{ state: "syncing" } as SyncStatusSnapshot, "Syncing…"],
+    [{ state: "previewing" } as SyncStatusSnapshot, "Previewing…"],
+    [{ state: "preview" } as SyncStatusSnapshot, "Preview ready"],
     [{ state: "success" } as SyncStatusSnapshot, "Synced"],
     [{ state: "failed", message: "offline" } as SyncStatusSnapshot, "Failed"]
   ])("renders the %s state", (snapshot, label) => {
@@ -154,6 +156,32 @@ describe("buildStatusPanel", () => {
     controller.publish({ state: "success" });
     expect(button.disabled).toBe(false);
     expect(button.hasAttribute("aria-busy")).toBe(false);
+  });
+
+  test("runs a preview and disables both actions while previewing", () => {
+    const controller = createSyncStatusController({ state: "pending" });
+    const onSyncNow = vi.fn();
+    const onPreview = vi.fn();
+    const view = buildStatusPanel({
+      status: controller,
+      t: createTranslator("en"),
+      onSyncNow,
+      onPreview
+    });
+    const syncButton = view.element.querySelector<HTMLButtonElement>('[data-action="syncNow"]')!;
+    const previewButton = view.element.querySelector<HTMLButtonElement>('[data-action="preview"]')!;
+
+    previewButton.click();
+    expect(onPreview).toHaveBeenCalledOnce();
+    expect(onSyncNow).not.toHaveBeenCalled();
+
+    controller.publish({ state: "previewing" });
+    expect(syncButton.disabled).toBe(true);
+    expect(previewButton.disabled).toBe(true);
+
+    controller.publish({ state: "preview" });
+    expect(syncButton.disabled).toBe(false);
+    expect(previewButton.disabled).toBe(false);
   });
 
   test("destroy unsubscribes and removes the click callback", () => {

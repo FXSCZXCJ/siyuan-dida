@@ -172,6 +172,73 @@ describe("SyncEngine", () => {
     expect(siyuan.attrs[0].attrs["custom-dida-task-id"]).toBe("task-1");
   });
 
+  test("previews a new task without writing to Dida or SiYuan", async () => {
+    const siyuan = new FakeSiYuan([block({})]);
+    const dida = new FakeDida();
+
+    const result = await new SyncEngine(siyuan, dida).sync({
+      ...settings(),
+      dryRun: true
+    });
+
+    expect(result).toMatchObject({ dryRun: true, created: 1, scanned: 1 });
+    expect(dida.created).toEqual([]);
+    expect(siyuan.attrs).toEqual([]);
+    expect(result.events.some((event) => event.message.includes("开始同步预演"))).toBe(true);
+    expect(result.events.at(-1)?.message).toContain("未写入任何更改");
+  });
+
+  test("previews title updates, completion, and write-back without side effects", async () => {
+    const siyuan = new FakeSiYuan([
+      block({
+        id: "block-update",
+        markdown: "- [ ] 新标题",
+        attrs: {
+          "custom-dida-task-id": "task-update",
+          "custom-dida-project-id": "project-1",
+          "custom-dida-last-hash": taskHash("旧标题", false)
+        }
+      }),
+      block({
+        id: "block-complete",
+        markdown: "- [x] 完成并同步",
+        attrs: {
+          "custom-dida-task-id": "task-complete",
+          "custom-dida-project-id": "project-1",
+          "custom-dida-last-hash": taskHash("完成并同步", false)
+        }
+      }),
+      block({
+        id: "block-writeback",
+        markdown: "- [ ] 滴答已完成",
+        attrs: {
+          "custom-dida-task-id": "task-writeback",
+          "custom-dida-project-id": "project-1",
+          "custom-dida-last-hash": taskHash("滴答已完成", false)
+        }
+      })
+    ]);
+    const dida = new FakeDida();
+    dida.completedTasks.add("task-writeback");
+
+    const result = await new SyncEngine(siyuan, dida).sync({
+      ...settings(),
+      dryRun: true
+    });
+
+    expect(result).toMatchObject({
+      dryRun: true,
+      updated: 1,
+      completed: 1,
+      writtenBack: 1,
+      failed: 0
+    });
+    expect(dida.updated).toEqual([]);
+    expect(dida.completed).toEqual([]);
+    expect(siyuan.completed).toEqual([]);
+    expect(siyuan.attrs).toEqual([]);
+  });
+
   test("creates an undated Dida task when the setting disables a default date", async () => {
     const siyuan = new FakeSiYuan([block({})]);
     const dida = new FakeDida();
