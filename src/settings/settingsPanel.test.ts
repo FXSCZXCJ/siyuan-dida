@@ -9,7 +9,7 @@ import { createSyncStatusController } from "./statusPanel";
 const panelMocks = vi.hoisted(() => ({
   notebooks: Promise.resolve([] as Array<{ id: string; name: string }>),
   projects: Promise.resolve([] as Array<{ id: string; name: string }>),
-  resolveDidaCommand: vi.fn(async () => ({ command: "dida", version: "test" }))
+  resolveDidaCommand: vi.fn(async () => ({ command: "dida", version: "0.1.14" }))
 }));
 
 vi.mock("../siyuan/api", () => ({
@@ -18,6 +18,16 @@ vi.mock("../siyuan/api", () => ({
 
 vi.mock("../dida/cli", () => ({
   resolveDidaCommand: panelMocks.resolveDidaCommand,
+  checkDidaCliCompatibility: (version: string | undefined) => {
+    const normalizedVersion = version?.trim().replace(/^v/i, "") ?? "";
+    const verifiedVersions = ["0.1.10", "0.1.14"];
+    return {
+      normalizedVersion,
+      supported: verifiedVersions.includes(normalizedVersion),
+      verifiedVersions
+    };
+  },
+  VERIFIED_DIDA_CLI_VERSIONS: ["0.1.10", "0.1.14"],
   DidaCliClient: class {
     listProjects() {
       return panelMocks.projects;
@@ -400,6 +410,64 @@ describe("buildSettingsPanel range target behavior", () => {
 
     expect(writeText).toHaveBeenCalledWith(expect.stringContaining("Summary: scanned 1, created 1, recovered 1"));
     expect(writeText.mock.calls[0][0]).not.toMatch(/[\u3400-\u9fff]/u);
+  });
+});
+
+describe("buildSettingsPanel CLI diagnostics", () => {
+  beforeEach(() => {
+    panelMocks.resolveDidaCommand.mockClear();
+    panelMocks.notebooks = new Promise(() => undefined);
+    panelMocks.projects = Promise.resolve([]);
+  });
+
+  test("shows a supported CLI and copies non-secret diagnostics", async () => {
+    panelMocks.resolveDidaCommand.mockResolvedValue({ command: "dida.cmd", version: "0.1.14" });
+    const writeText = vi.fn<(text: string) => Promise<void>>(async () => undefined);
+    Object.defineProperty(navigator, "clipboard", {
+      configurable: true,
+      value: { writeText }
+    });
+    const onSave = vi.fn(async (savedSettings: PluginSettings) => savedSettings);
+    const panel = buildPanel({
+      settings: settings(),
+      t: createTranslator("en"),
+      onSave,
+      onClearLogs: async () => undefined
+    });
+    await flushAsyncRendering();
+
+    const status = panel.querySelector<HTMLElement>('[data-field="cliStatus"]')!;
+    expect(status.dataset.state).toBe("supported");
+    expect(status.textContent).toContain("Compatible CLI: dida.cmd (0.1.14)");
+
+    panel.querySelector<HTMLButtonElement>('[data-action="copyDiagnostics"]')!.click();
+    await flushAsyncRendering();
+
+    expect(writeText).toHaveBeenCalledWith(expect.stringContaining("cliCompatible: yes"));
+    expect(writeText).toHaveBeenCalledWith(expect.stringContaining("supportedCliVersions: 0.1.10, 0.1.14"));
+    expect(writeText.mock.calls[0][0]).not.toContain("access_token");
+  });
+
+  test("blocks project loading when the detected CLI version is unsupported", async () => {
+    panelMocks.resolveDidaCommand.mockResolvedValue({ command: "dida", version: "0.1.15" });
+    const onSave = vi.fn(async (savedSettings: PluginSettings) => savedSettings);
+    const panel = buildPanel({
+      settings: settings(),
+      t: createTranslator("en"),
+      onSave,
+      onClearLogs: async () => undefined
+    });
+    await flushAsyncRendering();
+
+    const status = panel.querySelector<HTMLElement>('[data-field="cliStatus"]')!;
+    expect(status.dataset.state).toBe("unsupported");
+    expect(status.textContent).toContain("Unsupported CLI version: 0.1.15");
+
+    panel.querySelector<HTMLButtonElement>('[data-action="test"]')!.click();
+    await flushAsyncRendering();
+
+    expect(onSave).not.toHaveBeenCalled();
+    expect(status.dataset.state).toBe("unsupported");
   });
 });
 

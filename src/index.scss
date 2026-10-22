@@ -144,6 +144,28 @@
   gap: 8px;
 }
 
+.dida-sync-cli-status {
+  background: var(--b3-theme-background);
+  border: 1px solid var(--b3-border-color);
+  border-radius: 6px;
+  color: var(--b3-theme-on-surface);
+  font-size: 12px;
+  line-height: 1.45;
+  margin-top: 10px;
+  overflow-wrap: anywhere;
+  padding: 8px 10px;
+}
+
+.dida-sync-cli-status[data-state="supported"] {
+  border-color: var(--b3-theme-primary);
+}
+
+.dida-sync-cli-status[data-state="unsupported"] {
+  background: var(--b3-card-error-background);
+  border-color: var(--b3-card-error-color);
+  color: var(--b3-card-error-color);
+}
+
 .dida-sync-summary__actions {
   align-items: center;
   display: flex;

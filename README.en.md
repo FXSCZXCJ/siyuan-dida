@@ -59,6 +59,8 @@ Enable **Automatic sync** in plugin settings and select an interval of at least 
 
 The settings page includes a live status panel showing the current state, last finish time, and the latest counters. Use **Sync now** there to start a manual sync. Status summaries and logs are fully localized in Chinese and English and report scanned, created, recovered, updated, completed, written-back, skipped, and failed items.
 
+The Dida CLI section also shows whether the detected CLI version is supported. **Copy diagnostics** creates a token-free report with the plugin version, platform, CLI command/version, compatibility result, sync-range count, and last sync status for easier troubleshooting.
+
 ## Sync range safety
 
 Sync ranges in the same SiYuan notebook cannot cover the same document scope. The settings page rejects identical paths and parent/child overlaps when the parent range includes child documents. Sibling paths and equivalent paths in different notebooks remain valid.

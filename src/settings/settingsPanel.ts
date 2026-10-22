@@ -1,6 +1,13 @@
 import { showMessage } from "siyuan";
 import type { SyncRange } from "../core/types";
-import { DidaCliClient, type DidaProject, resolveDidaCommand } from "../dida/cli";
+import {
+  checkDidaCliCompatibility,
+  DidaCliClient,
+  type DidaCliCompatibility,
+  type DidaProject,
+  resolveDidaCommand,
+  VERIFIED_DIDA_CLI_VERSIONS
+} from "../dida/cli";
 import { listNotebooks, type SiYuanNotebook } from "../siyuan/api";
 import { settingsForSave, type PluginSettings } from "./defaults";
 import { getResolvedCliPathForCurrentDevice, withResolvedCliPathForCurrentDevice } from "./deviceCli";
@@ -44,6 +51,11 @@ export function buildSettingsPanel(options: SettingsPanelOptions): SettingsPanel
     notebooks: [] as SiYuanNotebook[],
     projects: [] as DidaProject[],
     originalTargetProjectIds,
+    cliStatus: undefined as {
+      command: string;
+      version: string;
+      compatibility: DidaCliCompatibility;
+    } | undefined,
     t
   };
 
@@ -71,7 +83,9 @@ export function buildSettingsPanel(options: SettingsPanelOptions): SettingsPanel
         <div class="dida-sync-actions">
           <button class="b3-button" data-action="test">${t("testConnection")}</button>
           <button class="b3-button b3-button--outline" data-action="loadProjects">${t("refreshProjects")}</button>
+          <button class="b3-button b3-button--outline" data-action="copyDiagnostics">${t("copyDiagnostics")}</button>
         </div>
+        <div class="dida-sync-cli-status" data-field="cliStatus" data-state="unknown" role="status" aria-live="polite"></div>
       </section>
 
       <section class="dida-sync-section">
@@ -146,6 +160,7 @@ export function buildSettingsPanel(options: SettingsPanelOptions): SettingsPanel
   const rangesEl = root.querySelector<HTMLElement>('[data-field="ranges"]')!;
   const logs = root.querySelector<HTMLElement>('[data-field="logs"]')!;
   const watermarkEl = root.querySelector<HTMLElement>('[data-field="completedWatermark"]')!;
+  const cliStatusEl = root.querySelector<HTMLElement>('[data-field="cliStatus"]')!;
 
   cliCommand.value = options.settings.cliCommand;
   autoSync.checked = options.settings.autoSync;
@@ -159,6 +174,34 @@ export function buildSettingsPanel(options: SettingsPanelOptions): SettingsPanel
       : t("completedWatermarkNone");
   };
   renderWatermark();
+
+  const renderCliStatus = (resolved?: { command: string; version: string }) => {
+    if (!resolved) {
+      state.cliStatus = undefined;
+      cliStatusEl.dataset.state = "unknown";
+      cliStatusEl.textContent = t("cliStatusUntested");
+      return checkDidaCliCompatibility(undefined);
+    }
+
+    const compatibility = checkDidaCliCompatibility(resolved.version);
+    state.cliStatus = {
+      command: resolved.command,
+      version: resolved.version,
+      compatibility
+    };
+    cliStatusEl.dataset.state = compatibility.supported ? "supported" : "unsupported";
+    cliStatusEl.textContent = compatibility.supported
+      ? t("cliStatusCompatible", {
+          command: resolved.command,
+          version: compatibility.normalizedVersion || resolved.version
+        })
+      : t("cliStatusUnsupported", {
+          version: resolved.version || "unknown",
+          versions: compatibility.verifiedVersions.join(", ")
+        });
+    return compatibility;
+  };
+  renderCliStatus();
 
   const renderRanges = () => {
     if (disposed) return;
@@ -197,6 +240,12 @@ export function buildSettingsPanel(options: SettingsPanelOptions): SettingsPanel
   root.querySelector('[data-action="test"]')?.addEventListener("click", async () => {
     try {
       const resolved = await resolveDidaCommand(cliCommand.value || "dida");
+      if (disposed) return;
+      const compatibility = renderCliStatus(resolved);
+      if (!compatibility.supported) {
+        showMessage(cliStatusEl.textContent ?? t("cliUnavailable", { message: resolved.version }), 7000, "error");
+        return;
+      }
       if (disposed || !await rememberResolvedCliPath(resolved.command)) return;
       showMessage(t("cliAvailable", { command: resolved.command, version: resolved.version }));
       const projects = await new DidaCliClient(resolved.command).listProjects();
@@ -212,6 +261,12 @@ export function buildSettingsPanel(options: SettingsPanelOptions): SettingsPanel
   root.querySelector('[data-action="loadProjects"]')?.addEventListener("click", async () => {
     try {
       const resolved = await resolveDidaCommand(cliCommand.value || "dida");
+      if (disposed) return;
+      const compatibility = renderCliStatus(resolved);
+      if (!compatibility.supported) {
+        showMessage(cliStatusEl.textContent ?? t("cliUnavailable", { message: resolved.version }), 7000, "error");
+        return;
+      }
       if (disposed || !await rememberResolvedCliPath(resolved.command)) return;
       const projects = await new DidaCliClient(resolved.command).listProjects();
       if (disposed) return;
@@ -287,6 +342,33 @@ export function buildSettingsPanel(options: SettingsPanelOptions): SettingsPanel
     }
   }, eventOptions);
 
+  root.querySelector('[data-action="copyDiagnostics"]')?.addEventListener("click", async () => {
+    const status = options.status.getSnapshot();
+    const cli = state.cliStatus;
+    const report = [
+      "siyuan-dida diagnostics",
+      `pluginVersion: ${__PLUGIN_VERSION__}`,
+      `platform: ${navigator.platform || "unknown"}`,
+      `cliCommand: ${cli?.command ?? (cliCommand.value || "dida")}`,
+      `cliVersion: ${cli?.version ?? "unknown"}`,
+      `cliCompatible: ${cli?.compatibility.supported === true ? "yes" : cli?.compatibility.supported === false ? "no" : "unknown"}`,
+      `supportedCliVersions: ${VERIFIED_DIDA_CLI_VERSIONS.join(", ")}`,
+      `syncRanges: ${state.ranges.length}`,
+      `autoSync: ${options.settings.autoSync ? "enabled" : "disabled"}`,
+      `lastSyncState: ${status.state}`,
+      `lastFinishedAt: ${status.lastFinishedAt ?? "unknown"}`,
+      `lastSyncMessage: ${status.message ?? ""}`
+    ].join("\n");
+    try {
+      await navigator.clipboard.writeText(report);
+      if (disposed) return;
+      showMessage(t("diagnosticsCopied"));
+    } catch (error) {
+      if (disposed) return;
+      showMessage(t("diagnosticsCopyFailed", { message: (error as Error).message }), 5000, "error");
+    }
+  }, eventOptions);
+
   root.querySelector('[data-action="clearLogs"]')?.addEventListener("click", async () => {
     try {
       await options.onClearLogs();
@@ -310,7 +392,11 @@ export function buildSettingsPanel(options: SettingsPanelOptions): SettingsPanel
     .catch(() => undefined);
 
   void resolveDidaCommand(getResolvedCliPathForCurrentDevice(options.settings) || options.settings.cliCommand || "dida")
-    .then((resolved) => disposed ? [] : new DidaCliClient(resolved.command).listProjects())
+    .then((resolved) => {
+      if (disposed) return [];
+      const compatibility = renderCliStatus(resolved);
+      return compatibility.supported ? new DidaCliClient(resolved.command).listProjects() : [];
+    })
     .then((projects) => {
       if (disposed) return;
       state.projects = projects;

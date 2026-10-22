@@ -5,6 +5,7 @@ import { join } from "node:path";
 import {
   buildDesktopPath,
   buildWindowsCmdInvocation,
+  checkDidaCliCompatibility,
   DidaCliClient,
   resolveDidaCommand,
   resolveWindowsCmdShim,
@@ -15,6 +16,22 @@ import { DidaCliGateway } from "./gateway";
 const completedOptions = (overrides: Partial<DidaCliClientOptions> = {}): DidaCliClientOptions => ({
   cliVersion: "0.1.14",
   ...overrides
+});
+
+describe("checkDidaCliCompatibility", () => {
+  test.each(["0.1.10", "0.1.14", " v0.1.14 "])("accepts verified CLI version %j", (version) => {
+    expect(checkDidaCliCompatibility(version)).toMatchObject({
+      supported: true,
+      verifiedVersions: ["0.1.10", "0.1.14"]
+    });
+  });
+
+  test.each([undefined, "", "0.1.13", "0.1.15"])("rejects unsupported CLI version %j", (version) => {
+    expect(checkDidaCliCompatibility(version)).toMatchObject({
+      supported: false,
+      verifiedVersions: ["0.1.10", "0.1.14"]
+    });
+  });
 });
 
 describe("resolveDidaCommand", () => {

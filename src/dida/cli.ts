@@ -16,6 +16,12 @@ export interface ResolvedDidaCommand {
   version: string;
 }
 
+export interface DidaCliCompatibility {
+  normalizedVersion: string;
+  supported: boolean;
+  verifiedVersions: string[];
+}
+
 export interface WindowsCmdShim {
   command: string;
   argsPrefix: string[];
@@ -61,6 +67,16 @@ const SNAPSHOT_PROTOCOLS: ReadonlyMap<string, SnapshotProtocol> = new Map([
     completedUpperBoundSecond: Date.parse("9999-12-31T23:59:59Z") / 1_000
   }]
 ]);
+export const VERIFIED_DIDA_CLI_VERSIONS = [...SNAPSHOT_PROTOCOLS.keys()];
+
+export function checkDidaCliCompatibility(cliVersion: string | undefined): DidaCliCompatibility {
+  const normalizedVersion = cliVersion?.trim().replace(/^v/i, "") ?? "";
+  return {
+    normalizedVersion,
+    supported: SNAPSHOT_PROTOCOLS.has(normalizedVersion),
+    verifiedVersions: VERIFIED_DIDA_CLI_VERSIONS
+  };
+}
 
 export const defaultRunner: CommandRunner = (command, args) =>
   new Promise((resolve, reject) => {
@@ -504,8 +520,8 @@ function snapshotProtocol(
   cliVersion: string | undefined,
   snapshotName: "Incomplete" | "Completed"
 ): SnapshotProtocol {
-  const normalizedVersion = cliVersion?.trim().replace(/^v/i, "") ?? "";
-  const protocol = SNAPSHOT_PROTOCOLS.get(normalizedVersion);
+  const compatibility = checkDidaCliCompatibility(cliVersion);
+  const protocol = SNAPSHOT_PROTOCOLS.get(compatibility.normalizedVersion);
   if (!protocol) {
     const displayedVersion = cliVersion?.trim() || "missing";
     throw new Error(
