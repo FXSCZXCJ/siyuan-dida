@@ -115,7 +115,9 @@ export interface DidaGateway {
   listIncompleteTasks(projectIds: string[]): Promise<DidaTaskSnapshot[]>;
   listCompletedTasks(projectIds: string[], startSecond?: number): Promise<DidaTaskSnapshot[]>;
   createTask(projectId: string, title: string, options?: CreateDidaTaskOptions): Promise<{ id: string; projectId: string }>;
+  getTask(projectId: string, taskId: string): Promise<DidaTaskSnapshot & { status?: number } | null>;
   updateTaskTitle(projectId: string, taskId: string, title: string): Promise<void>;
   setTaskParent(projectId: string, taskId: string, parentTaskId: string): Promise<void>;
   completeTask(projectId: string, taskId: string): Promise<void>;
+  deleteTask(projectId: string, taskId: string): Promise<void>;
 }

@@ -307,6 +307,10 @@ function parseJson<T>(stdout: string): T {
   return JSON.parse(stdout) as T;
 }
 
+export function isDidaTaskNotFoundError(error: unknown): boolean {
+  return /DIDA API 错误 404(?:\D|$)/i.test(error instanceof Error ? error.message : String(error));
+}
+
 export class DidaCliClient {
   private readonly runner: CommandRunner;
   private readonly options: DidaCliClientOptions;
@@ -417,6 +421,28 @@ export class DidaCliClient {
 
   async completeTask(projectId: string, taskId: string): Promise<void> {
     await this.runner(this.command, ["task", "complete", projectId, taskId]);
+  }
+
+  async getTask(projectId: string, taskId: string): Promise<DidaTask | null> {
+    try {
+      const result = await this.runner(this.command, [
+        "task",
+        "get",
+        projectId,
+        taskId,
+        "--json"
+      ]);
+      return parseJson<DidaTask>(result.stdout);
+    } catch (error) {
+      if (isDidaTaskNotFoundError(error)) {
+        return null;
+      }
+      throw error;
+    }
+  }
+
+  async deleteTask(projectId: string, taskId: string): Promise<void> {
+    await this.runner(this.command, ["task", "delete", projectId, taskId]);
   }
 
   async listCompletedTasks(

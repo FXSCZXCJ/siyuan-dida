@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test, vi } from "vitest";
-import { SiYuanRepository, buildTodoBlockSql } from "./repository";
+import { SiYuanRepository, buildBoundTodoBlockSql, buildTodoBlockSql } from "./repository";
 
 afterEach(() => {
   vi.restoreAllMocks();
@@ -119,6 +119,27 @@ describe("buildTodoBlockSql", () => {
 
     expect(sql).toContain("(b.hpath = '/版本_100%' OR instr(b.hpath, '/版本_100%/') = 1)");
     expect(sql).not.toContain("LIKE '/版本");
+  });
+});
+
+describe("buildBoundTodoBlockSql", () => {
+  test("selects only bound todo blocks in the configured document scope", () => {
+    const sql = buildBoundTodoBlockSql({
+      id: "range-1",
+      name: "Work",
+      notebookId: "box-1",
+      hpathPrefix: "/Work",
+      includeChildren: true,
+      targetProjectId: "project-1",
+      targetProjectName: "Work"
+    }, 500, 1000);
+
+    expect(sql).toContain("b.box = 'box-1'");
+    expect(sql).toContain("(b.hpath = '/Work' OR instr(b.hpath, '/Work/') = 1)");
+    expect(sql).toContain("b.type = 'i'");
+    expect(sql).toContain("b.subtype = 't'");
+    expect(sql).toContain("b.ial LIKE '%custom-dida-task-id%'");
+    expect(sql).toContain("LIMIT 500 OFFSET 1000");
   });
 });
 

@@ -132,6 +132,11 @@ class FakeDida implements DidaGateway {
     return task;
   }
 
+  async getTask(projectId: string, taskId: string) {
+    const task = this.incompleteTasks.find((candidate) => candidate.projectId === projectId && candidate.id === taskId);
+    return task ?? null;
+  }
+
   async updateTaskTitle(projectId: string, taskId: string, title: string) {
     this.updated.push({ projectId, taskId, title });
   }
@@ -142,6 +147,10 @@ class FakeDida implements DidaGateway {
 
   async completeTask(projectId: string, taskId: string) {
     this.completed.push({ projectId, taskId });
+  }
+
+  async deleteTask(_projectId: string, _taskId: string): Promise<void> {
+    // The sync engine never deletes tasks.
   }
 
 }

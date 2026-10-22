@@ -63,6 +63,15 @@ The Dida CLI section also shows whether the detected CLI version is supported. *
 
 The status panel also provides **Preview sync**. A preview reads both sides and calculates the planned creations, updates, completions, and write-backs without changing Dida or SiYuan, saving a sync log, advancing cursors, or updating the completed-task watermark.
 
+## Binding maintenance
+
+The settings page includes **Scan bindings**, which detects:
+
+- SiYuan blocks whose bound Dida task no longer exists.
+- Incomplete Dida tasks whose source SiYuan block was deleted.
+
+Every action is manual: invalid bindings can be cleared, and orphan tasks can be completed or deleted. The plugin never deletes tasks automatically. Orphan detection currently covers incomplete Dida tasks only; failed per-task lookups are skipped and shown as warnings.
+
 ## Sync range safety
 
 Sync ranges in the same SiYuan notebook cannot cover the same document scope. The settings page rejects identical paths and parent/child overlaps when the parent range includes child documents. Sibling paths and equivalent paths in different notebooks remain valid.
@@ -88,7 +97,7 @@ Data storage is unchanged in version 1.1.13. Stable plugin settings are stored u
 
 ## Limits
 
-This MVP does not delete tasks, sync due dates or reminders, sync repeating tasks, synchronize Dida title edits back to SiYuan, or synchronize tables and database blocks. The new-task date setting affects only tasks created after the setting is saved; it never changes dates on existing Dida tasks.
+Automatic sync never deletes tasks; only the manual actions under **Binding maintenance** can delete a Dida task. The plugin does not sync due dates or reminders, sync repeating tasks, synchronize Dida title edits back to SiYuan, or synchronize tables and database blocks. The new-task date setting affects only tasks created after the setting is saved; it never changes dates on existing Dida tasks.
 
 The Dida CLI does not provide a remote idempotency primitive for task creation. Do not run simultaneous initial syncs for the same unbound SiYuan todos on multiple devices. Cross-device exactly-once creation is not guaranteed; if duplicates are created, their matching source markers become ambiguous and the plugin stops recovery safely instead of choosing a task.
 

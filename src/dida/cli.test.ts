@@ -344,6 +344,39 @@ describe("DidaCliClient", () => {
     });
   });
 
+  test("gets a task by project and task ID", async () => {
+    const client = new DidaCliClient("dida", async (_command, args) => {
+      expect(args).toEqual(["task", "get", "project-1", "task-1", "--json"]);
+      return {
+        stdout: JSON.stringify({ id: "task-1", projectId: "project-1", title: "Task", status: 0 }),
+        stderr: ""
+      };
+    });
+
+    await expect(client.getTask("project-1", "task-1")).resolves.toMatchObject({
+      id: "task-1",
+      projectId: "project-1",
+      status: 0
+    });
+  });
+
+  test("returns null when the Dida task is not found", async () => {
+    const client = new DidaCliClient("dida", async () => {
+      throw new Error("DIDA API 错误 404: task not found");
+    });
+
+    await expect(client.getTask("project-1", "missing")).resolves.toBeNull();
+  });
+
+  test("deletes a task", async () => {
+    const client = new DidaCliClient("dida", async (_command, args) => {
+      expect(args).toEqual(["task", "delete", "project-1", "task-1"]);
+      return { stdout: "任务已删除", stderr: "" };
+    });
+
+    await expect(client.deleteTask("project-1", "task-1")).resolves.toBeUndefined();
+  });
+
   test("sets a task parent with the update command", async () => {
     const client = new DidaCliClient("dida", async (command, args) => {
       expect(command).toBe("dida");

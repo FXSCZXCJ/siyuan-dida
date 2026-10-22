@@ -1,6 +1,11 @@
 import "./index.scss";
 import { Dialog, Plugin, showMessage } from "siyuan";
 import { SyncEngine } from "./core/syncEngine";
+import {
+  BindingMaintenance,
+  type BindingIssue,
+  type BindingIssueAction
+} from "./core/bindingMaintenance";
 import { resolveDidaCommand, DidaCliClient } from "./dida/cli";
 import { DidaCliGateway } from "./dida/gateway";
 import {
@@ -186,7 +191,23 @@ export default class SiyuanDidaPlugin extends Plugin {
           if (this.unloaded) return;
           this.settings.logs = [];
         }),
-        onRebuildBaseline: () => this.rebuildCompletedBaseline()
+        onRebuildBaseline: () => this.rebuildCompletedBaseline(),
+        onScanBindingIssues: () => this.enqueueOperation(async () => {
+          if (this.unloaded) {
+            return { issues: [], warnings: [], scannedBindings: 0, scannedRemoteTasks: 0 };
+          }
+          return (await this.createBindingMaintenance()).scan({
+            maxTasksPerRun: this.settings.maxTasksPerRun || DEFAULT_SETTINGS.maxTasksPerRun,
+            newTaskDate: this.settings.newTaskDate,
+            ranges: this.settings.ranges,
+            completedWatermarkSecond: this.settings.completedWatermarkSecond
+          });
+        }),
+        onResolveBindingIssue: (issue: BindingIssue, action: BindingIssueAction) =>
+          this.enqueueOperation(async () => {
+            if (this.unloaded) return;
+            await (await this.createBindingMaintenance()).resolve(issue, action);
+          })
       });
       this.settingsViews.add(view);
       mount.appendChild(view.element);
@@ -380,6 +401,20 @@ export default class SiyuanDidaPlugin extends Plugin {
       await this.storage.saveRuntime(this.settings);
     });
     await this.runSync();
+  }
+
+  private async createBindingMaintenance(): Promise<BindingMaintenance> {
+    const resolved = await resolveDidaCommand(
+      getResolvedCliPathForCurrentDevice(this.settings) || this.settings.cliCommand || "dida"
+    );
+    this.settings = withResolvedCliPathForCurrentDevice(this.settings, resolved.command);
+    return new BindingMaintenance(
+      new SiYuanRepository(),
+      new DidaCliGateway(new DidaCliClient(resolved.command, {
+        cliVersion: resolved.version
+      })),
+      this.t
+    );
   }
 
   private resultHasRateLimit(result: SyncResult): boolean {

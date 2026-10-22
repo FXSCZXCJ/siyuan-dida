@@ -2,6 +2,7 @@
 
 import { beforeEach, describe, expect, test, vi } from "vitest";
 import { createTranslator } from "../i18n";
+import type { BindingScanResult } from "../core/bindingMaintenance";
 import type { PluginSettings } from "./defaults";
 import { getRangeValidationMessage, getTargetProjectWarning, RangeValidationError } from "./ranges";
 import { createSyncStatusController } from "./statusPanel";
@@ -468,6 +469,64 @@ describe("buildSettingsPanel CLI diagnostics", () => {
 
     expect(onSave).not.toHaveBeenCalled();
     expect(status.dataset.state).toBe("unsupported");
+  });
+});
+
+describe("buildSettingsPanel binding maintenance", () => {
+  test("renders scan results and resolves issues through explicit actions", async () => {
+    const scanResult: BindingScanResult = {
+      scannedBindings: 3,
+      scannedRemoteTasks: 4,
+      warnings: ["lookup warning"],
+      issues: [
+        {
+          id: "missing-1",
+          kind: "missing_dida_task",
+          blockId: "block-1",
+          hpath: "/Work/A",
+          title: "Missing task",
+          projectId: "project-1",
+          taskId: "task-1"
+        },
+        {
+          id: "orphan-1",
+          kind: "orphan_dida_task",
+          blockId: "block-2",
+          title: "Orphan task",
+          projectId: "project-1",
+          taskId: "task-2"
+        }
+      ]
+    };
+    const onScanBindingIssues = vi.fn(async () => scanResult);
+    const onResolveBindingIssue = vi.fn(async () => undefined);
+    const panel = buildPanel({
+      settings: settings(),
+      t: createTranslator("en"),
+      onSave: async (savedSettings) => savedSettings,
+      onClearLogs: async () => undefined,
+      onScanBindingIssues,
+      onResolveBindingIssue
+    });
+    const confirm = vi.spyOn(window, "confirm").mockReturnValue(true);
+
+    panel.querySelector<HTMLButtonElement>('[data-action="scanBindings"]')!.click();
+    await flushAsyncRendering();
+
+    expect(onScanBindingIssues).toHaveBeenCalledOnce();
+    expect(panel.textContent).toContain("Checked 3 bindings and 4 incomplete Dida tasks; found 2 issues.");
+    expect(panel.textContent).toContain("lookup warning");
+    expect(panel.querySelectorAll(".dida-sync-binding-issue")).toHaveLength(2);
+
+    panel.querySelector<HTMLButtonElement>('[data-binding-action="clear_binding"]')!.click();
+    await flushAsyncRendering();
+    expect(onResolveBindingIssue).toHaveBeenCalledWith(expect.objectContaining({ id: "missing-1" }), "clear_binding");
+
+    panel.querySelector<HTMLButtonElement>('[data-binding-action="delete_task"]')!.click();
+    await flushAsyncRendering();
+    expect(confirm).toHaveBeenCalledOnce();
+    expect(onResolveBindingIssue).toHaveBeenCalledWith(expect.objectContaining({ id: "orphan-1" }), "delete_task");
+    expect(panel.querySelectorAll(".dida-sync-binding-issue")).toHaveLength(0);
   });
 });
 

@@ -16,6 +16,10 @@ export class DidaCliGateway implements DidaGateway {
     return this.client.createTask(projectId, title, options);
   }
 
+  getTask(projectId: string, taskId: string) {
+    return this.client.getTask(projectId, taskId);
+  }
+
   async updateTaskTitle(projectId: string, taskId: string, title: string): Promise<void> {
     await this.client.updateTaskTitle(projectId, taskId, title);
   }
@@ -26,5 +30,9 @@ export class DidaCliGateway implements DidaGateway {
 
   completeTask(projectId: string, taskId: string) {
     return this.client.completeTask(projectId, taskId);
+  }
+
+  deleteTask(projectId: string, taskId: string) {
+    return this.client.deleteTask(projectId, taskId);
   }
 }

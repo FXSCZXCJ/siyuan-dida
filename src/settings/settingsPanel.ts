@@ -1,5 +1,10 @@
 import { showMessage } from "siyuan";
 import type { SyncRange } from "../core/types";
+import type {
+  BindingIssue,
+  BindingIssueAction,
+  BindingScanResult
+} from "../core/bindingMaintenance";
 import {
   checkDidaCliCompatibility,
   DidaCliClient,
@@ -30,6 +35,8 @@ export interface SettingsPanelOptions {
   onSave(settings: PluginSettings): Promise<PluginSettings>;
   onClearLogs(): Promise<void>;
   onRebuildBaseline?(): void | Promise<void>;
+  onScanBindingIssues?(): Promise<BindingScanResult>;
+  onResolveBindingIssue?(issue: BindingIssue, action: BindingIssueAction): Promise<void>;
 }
 
 export interface SettingsPanelView {
@@ -57,6 +64,8 @@ export function buildSettingsPanel(options: SettingsPanelOptions): SettingsPanel
       version: string;
       compatibility: DidaCliCompatibility;
     } | undefined,
+    bindingIssues: [] as BindingIssue[],
+    bindingWarnings: [] as string[],
     t
   };
 
@@ -131,6 +140,21 @@ export function buildSettingsPanel(options: SettingsPanelOptions): SettingsPanel
       <div class="dida-sync-ranges" data-field="ranges"></div>
     </section>
 
+    <section class="dida-sync-section" data-field="bindingMaintenance" hidden>
+      <div class="dida-sync-section__bar">
+        <div>
+          <div class="dida-sync-section__title">${t("bindingMaintenanceTitle")}</div>
+          <div class="dida-sync-muted">${t("bindingMaintenanceHelp")}</div>
+        </div>
+        <div class="dida-sync-actions">
+          <button class="b3-button b3-button--outline" data-action="scanBindings">${t("scanBindings")}</button>
+        </div>
+      </div>
+      <div class="dida-sync-muted" data-field="bindingScanSummary"></div>
+      <div class="dida-sync-binding-warnings" data-field="bindingScanWarnings" role="status" aria-live="polite" hidden></div>
+      <div class="dida-sync-binding-issues" data-field="bindingIssues"></div>
+    </section>
+
     <section class="dida-sync-section">
       <div class="dida-sync-section__bar">
         <div>
@@ -163,6 +187,11 @@ export function buildSettingsPanel(options: SettingsPanelOptions): SettingsPanel
   const logs = root.querySelector<HTMLElement>('[data-field="logs"]')!;
   const watermarkEl = root.querySelector<HTMLElement>('[data-field="completedWatermark"]')!;
   const cliStatusEl = root.querySelector<HTMLElement>('[data-field="cliStatus"]')!;
+  const bindingSection = root.querySelector<HTMLElement>('[data-field="bindingMaintenance"]')!;
+  const bindingSummary = root.querySelector<HTMLElement>('[data-field="bindingScanSummary"]')!;
+  const bindingWarnings = root.querySelector<HTMLElement>('[data-field="bindingScanWarnings"]')!;
+  const bindingIssuesEl = root.querySelector<HTMLElement>('[data-field="bindingIssues"]')!;
+  const scanBindingsButton = root.querySelector<HTMLButtonElement>('[data-action="scanBindings"]')!;
 
   cliCommand.value = options.settings.cliCommand;
   autoSync.checked = options.settings.autoSync;
@@ -204,6 +233,44 @@ export function buildSettingsPanel(options: SettingsPanelOptions): SettingsPanel
     return compatibility;
   };
   renderCliStatus();
+  if (!options.onScanBindingIssues || !options.onResolveBindingIssue) {
+    bindingSection.remove();
+  } else {
+    bindingSection.hidden = false;
+  }
+
+  const renderBindingIssues = () => {
+    if (disposed) return;
+    bindingWarnings.hidden = state.bindingWarnings.length === 0;
+    bindingWarnings.replaceChildren(...state.bindingWarnings.map((warning) => {
+      const line = document.createElement("div");
+      line.textContent = warning;
+      return line;
+    }));
+    bindingIssuesEl.replaceChildren(...state.bindingIssues.map((issue) => {
+      const card = document.createElement("div");
+      card.className = "dida-sync-binding-issue";
+      card.dataset.issueId = issue.id;
+      const missing = issue.kind === "missing_dida_task";
+      card.innerHTML = `
+        <div class="dida-sync-binding-issue__body">
+          <div class="dida-sync-binding-issue__title">${missing ? t("bindingIssueMissing") : t("bindingIssueOrphan")}：${escapeHtml(issue.title)}</div>
+          <div class="dida-sync-muted">${missing ? t("bindingIssueMissingDesc") : t("bindingIssueOrphanDesc")}</div>
+          <div class="dida-sync-binding-issue__meta">${escapeHtml(issue.hpath || issue.blockId || "—")} · ${escapeHtml(issue.projectId)}/${escapeHtml(issue.taskId)}</div>
+        </div>
+        <div class="dida-sync-actions">
+          ${missing
+            ? `<button class="b3-button b3-button--outline" data-binding-action="clear_binding">${t("clearBinding")}</button>`
+            : `<button class="b3-button b3-button--outline" data-binding-action="complete_task">${t("completeDidaTask")}</button>
+               <button class="b3-button b3-button--outline" data-binding-action="delete_task">${t("deleteDidaTask")}</button>`}
+        </div>
+      `;
+      return card;
+    }));
+    if (state.bindingIssues.length === 0 && !bindingSummary.textContent) {
+      bindingSummary.textContent = "";
+    }
+  };
 
   const renderRanges = () => {
     if (disposed) return;
@@ -311,6 +378,69 @@ export function buildSettingsPanel(options: SettingsPanelOptions): SettingsPanel
     } catch (error) {
       if (disposed) return;
       showMessage(t("syncFailed", { message: (error as Error).message }), 7000, "error");
+    }
+  }, eventOptions);
+
+  scanBindingsButton.addEventListener("click", async () => {
+    if (!options.onScanBindingIssues) return;
+    scanBindingsButton.disabled = true;
+    scanBindingsButton.textContent = t("scanningBindings");
+    bindingSummary.textContent = "";
+    bindingWarnings.hidden = true;
+    bindingWarnings.replaceChildren();
+    try {
+      const result = await options.onScanBindingIssues();
+      if (disposed) return;
+      state.bindingIssues = result.issues;
+      state.bindingWarnings = result.warnings;
+      bindingSummary.textContent = t("bindingScanComplete", {
+        bindings: result.scannedBindings,
+        remoteTasks: result.scannedRemoteTasks,
+        issues: result.issues.length
+      });
+      if (result.warnings.length > 0) {
+        bindingSummary.textContent += ` ${t("bindingScanWarnings", { count: result.warnings.length })}`;
+      }
+      renderBindingIssues();
+    } catch (error) {
+      if (disposed) return;
+      bindingSummary.textContent = t("bindingScanFailed", { message: (error as Error).message });
+      state.bindingIssues = [];
+      state.bindingWarnings = [];
+      renderBindingIssues();
+    } finally {
+      if (!disposed) {
+        scanBindingsButton.disabled = false;
+        scanBindingsButton.textContent = t("scanBindings");
+      }
+    }
+  }, eventOptions);
+
+  bindingIssuesEl.addEventListener("click", async (event) => {
+    if (!options.onResolveBindingIssue) return;
+    const target = event.target instanceof Element
+      ? event.target.closest<HTMLButtonElement>("[data-binding-action]")
+      : null;
+    if (!target) return;
+    const issueId = target.closest<HTMLElement>("[data-issue-id]")?.dataset.issueId;
+    const issue = state.bindingIssues.find((candidate) => candidate.id === issueId);
+    const action = target.dataset.bindingAction as BindingIssueAction | undefined;
+    if (!issue || !action) return;
+    if (action === "delete_task" && !window.confirm(t("confirmDeleteDidaTask"))) {
+      return;
+    }
+
+    target.disabled = true;
+    try {
+      await options.onResolveBindingIssue(issue, action);
+      if (disposed) return;
+      state.bindingIssues = state.bindingIssues.filter((candidate) => candidate.id !== issue.id);
+      renderBindingIssues();
+      showMessage(t("bindingResolved"));
+    } catch (error) {
+      if (disposed) return;
+      target.disabled = false;
+      showMessage(t("bindingResolveFailed", { message: (error as Error).message }), 5000, "error");
     }
   }, eventOptions);
 
