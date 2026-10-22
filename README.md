@@ -1,86 +1,94 @@
-# SiYuan Dida Sync
+# 思源滴答同步
 
-A desktop-only SiYuan plugin that syncs Markdown todo blocks with Dida (TickTick) through the local `dida` CLI.
+> **上游项目说明**
+>
+> 本仓库是 [Cloudquill-Z/siyuan-dida](https://github.com/Cloudquill-Z/siyuan-dida) 的 fork，主要用于验证并适配 Dida CLI `0.1.14`。原项目、主要实现和英文文档均来自上游；本 fork 默认提供中文 README，并继续兼容 Dida CLI `0.1.10`。
+>
+> - 上游仓库：<https://github.com/Cloudquill-Z/siyuan-dida>
+> - 当前 fork：<https://github.com/FXSCZXCJ/siyuan-dida>
+> - 上游发布新版本后，本 fork 可能需要先同步上游再重新验证适配。
 
-## Before you start
+这是一个仅面向思源桌面端的插件，通过本机 `dida` CLI 同步 Markdown 待办块和滴答清单。
 
-This plugin runs a command on your own computer. It supports SiYuan Desktop on macOS, Windows, and Linux; it does not run on mobile, Docker, or browser installations. Your Dida account, CLI installation, and authorization stay on each device.
+## 使用前提
 
-## Install and authorize the Dida CLI
+插件会在本机运行命令，支持 macOS、Windows 和 Linux 的思源桌面端；不支持移动端、Docker 和浏览器端。每台电脑都需要独立安装和授权 Dida CLI，账号与授权数据不会由插件复制到其他设备。
 
-1. Open the [official Dida CLI guide](https://help.dida365.com/articles/7464976698707017728) and install the CLI for your computer.
-2. Follow that guide to sign in or authorize the CLI on this device.
-3. In a terminal, verify that the command is available:
+## 安装并授权 Dida CLI
+
+1. 打开 [Dida CLI 官方使用说明](https://help.dida365.com/articles/7464976698707017728)，按说明在本机安装 CLI。
+2. 按官方说明在本机登录或授权。
+3. 在终端中验证命令：
 
    ```sh
    dida --version
    ```
 
-   Safe task-snapshot recovery in this plugin release is verified against Dida CLI `0.1.14` and retains compatibility with `0.1.10`. Other CLI versions are intentionally rejected until their result limits and date-filter behavior have been verified. When that safety check fails—or when an incomplete-task response reaches the CLI's 200-item limit—the plugin blocks recovery and new unbound task creation instead of risking duplicates.
+   本插件版本的任务快照安全恢复已针对 Dida CLI `0.1.14` 完成验证，并继续兼容 `0.1.10`。其他 CLI 版本在任务数量上限及日期过滤行为得到验证前，会被主动拒绝；未完成任务响应达到 CLI 的 200 条上限时也会安全停止。此时插件会禁止恢复和新建未绑定任务，以免产生重复任务。
 
-4. Install **Dida Sync** from the SiYuan Bazaar and enable it. If SiYuan cannot find the command, open the plugin settings and enter `dida` or the command's absolute path. On Windows this is usually a `dida.cmd` path.
+4. 在思源集市安装并启用“滴答同步”。如果思源找不到命令，在插件设置中填写 `dida` 或其绝对路径；Windows 通常应填写 `dida.cmd` 的路径。
 
-Repeat these steps on every computer that uses the plugin. The plugin stores resolved executable paths per device, so one computer's path is not used by another.
+每台需要使用插件的电脑都要重复以上步骤。插件会按设备保存已解析的 CLI 路径，不会在其他设备上复用。
 
-## Configure your first sync
+## 第一次配置
 
-1. Open **Settings → Dida Sync** in SiYuan.
-2. Choose **Test connection**, then **Refresh Dida lists**.
-3. Under **Sync ranges**, choose a SiYuan notebook, document path, target Dida list, and whether child documents are included.
-4. Choose the default date for newly created Dida tasks:
-   - **Today (all-day)** creates new Dida tasks dated today. This is the default.
-   - **No date** creates new Dida tasks without a date.
-5. Save settings, then use the top-bar sync button to run the first sync.
+1. 在思源中打开 **设置 → 滴答同步**。
+2. 点击“测试连接”，然后点击“刷新滴答清单”。
+3. 在“同步范围”中选择思源笔记本、文档路径、目标滴答清单，以及是否包含子文档。
+4. 选择“新建滴答任务日期”：
+   - **今天（全天）**：新建任务默认日期为今天，保持旧版本行为。
+   - **不设置日期**：新建任务不传入日期。
+5. 保存设置，点击顶部工具栏的同步按钮执行首次同步。
 
-## What syncs
+## 同步规则
 
-- An unchecked SiYuan Markdown todo creates a Dida task in its configured target list.
-- Every task created by the plugin has visible Dida task content containing `SiYuan-Block-ID: <block-id>`. This stable source marker lets the plugin reconnect the task to its SiYuan block after a known partial failure.
-- Editing the title of a bound, incomplete SiYuan todo updates its Dida title.
-- Completing a bound SiYuan todo completes its Dida task.
-- Completing a bound Dida task marks the matching SiYuan todo completed.
-- Todo nesting is preserved when the parent todo is also bound.
+- 未完成的思源 Markdown 待办会在目标滴答清单中新建任务。
+- 插件新建的每个滴答任务都会包含可见内容 `SiYuan-Block-ID: <块 ID>`。这个稳定的来源标识可在已知的部分失败后，把滴答任务重新绑定到原思源块。
+- 已绑定且未完成的待办修改标题后，会更新对应的滴答任务标题。
+- 在思源完成已绑定待办，会完成对应的滴答任务。
+- 在滴答完成已绑定任务，会回写为思源待办完成。
+- 父待办已绑定时，会保留待办层级。
 
-Before creating unbound tasks, the plugin reads both incomplete and completed task snapshots from every configured Dida list. A unique source marker can restore a missing binding, update a changed SiYuan title in Dida, restore the parent relationship, and reconcile completion in either direction. This also prevents another task from being created after known failures such as a lost CLI response or a failed SiYuan attribute write.
+新建未绑定任务前，插件会读取每个已配置滴答清单的未完成和已完成任务快照。唯一的来源标识可以恢复缺失的绑定、把思源中已修改的标题更新到滴答、恢复父子关系，并按两端的完成状态进行协调。对于 CLI 响应丢失或思源属性写入失败等已知故障，这也能避免再次创建任务。
 
-Recovery stops safely if the same source marker appears on multiple Dida tasks. If either the incomplete or completed snapshot is unavailable, the plugin does not recover or create unmatched, unbound tasks during that run. Already-bound tasks can still be updated or completed when their operation does not depend on the missing snapshot.
+如果多个滴答任务包含同一个来源标识，恢复会安全停止。如果未完成或已完成任务快照中任意一个不可用，本轮不会恢复或创建尚未匹配的未绑定任务；不依赖缺失快照的已绑定任务仍可继续更新或完成。
 
-## Automatic sync
+## 自动同步
 
-Enable **Automatic sync** in plugin settings and select an interval of at least five seconds. Only one sync runs at a time on the current device; an overlapping trigger is skipped.
+在插件设置中开启“自动同步”，并设置不少于 5 秒的同步间隔。同一设备一次只会运行一个同步任务，重叠触发会自动跳过。
 
-The settings page includes a live status panel showing the current state, last finish time, and the latest counters. Use **Sync now** there to start a manual sync. Status summaries and logs are fully localized in Chinese and English and report scanned, created, recovered, updated, completed, written-back, skipped, and failed items.
+设置页顶部提供实时状态面板，显示当前状态、上次完成时间和最近一次同步计数；可在这里点击“立即同步”手动执行。状态摘要和日志已完整支持中英文，会记录扫描、新增、恢复、更新、完成、回写、跳过和失败数量。
 
-## Sync range safety
+## 同步范围安全
 
-Sync ranges in the same SiYuan notebook cannot cover the same document scope. The settings page rejects identical paths and parent/child overlaps when the parent range includes child documents. Sibling paths and equivalent paths in different notebooks remain valid.
+同一个思源笔记本内的同步范围不能覆盖相同的文档区域。设置页会拒绝相同路径；如果父路径范围包含子文档，也会拒绝与其子路径重叠的范围。互不包含的同级路径以及不同笔记本中的相同路径仍然有效。
 
-If an older saved configuration contains missing fields, duplicate ranges, or overlapping ranges, all manual, startup, and automatic sync is blocked until the configuration is corrected and saved. This avoids assigning a block to an ambiguous destination.
+如果旧版保存的配置存在字段缺失、重复范围或重叠范围，手动同步、启动同步和自动同步都会被阻止，直到配置被修正并保存，以避免把同一块同步到含义不明确的目标。
 
-Changing a range's target Dida list affects only newly created tasks. Existing bindings stay in their original Dida lists and are not migrated automatically; the settings page warns about this before saving.
+修改某个范围的目标滴答清单只影响之后新建的任务。已有绑定会留在原滴答清单中，不会自动迁移；保存前设置页会显示提醒。
 
-## Data storage
+## 数据存储
 
-Data storage is unchanged in version 1.1.13. Stable plugin settings are stored under the workspace `conf/siyuan-dida/` directory. Sync logs and rotating cursor state are stored under `temp/siyuan-dida/`, outside SiYuan note data and data history. Logs retain the latest 20 runs. Version 1.1.12 and later automatically migrate the former `data/storage/petal/siyuan-dida/settings.json` file and remove it after the new files are written successfully.
+1.1.13 版没有改变数据存储位置。插件的稳定设置保存在工作空间的 `conf/siyuan-dida/` 目录；同步日志和轮转游标状态保存在 `temp/siyuan-dida/`，不会进入思源笔记数据及数据历史。日志最多保留最近 20 次同步。1.1.12 及之后版本会自动迁移原来的 `data/storage/petal/siyuan-dida/settings.json`，并在新文件全部写入成功后删除旧文件。
 
-## Troubleshooting
+## 排错
 
-- **Dida CLI is unavailable:** run `dida --version` in a terminal first. If it works there but not in SiYuan, enter the absolute executable path in settings and test again.
-- **A task snapshot reports an unsupported CLI version:** install Dida CLI `0.1.14` (or the still-supported `0.1.10`). This release fails safely on other versions until their snapshot protocol has been verified.
-- **No Dida lists appear:** authorize the CLI again using the [official guide](https://help.dida365.com/articles/7464976698707017728), then refresh lists.
-- **A task did not sync:** confirm that its notebook and path belong to a configured range, then review the plugin sync log.
-- **New tasks or recovery were blocked:** confirm both Dida snapshot requests are available, then run sync again. The block protects unbound todos from duplicate creation.
-- **Recovery reports an ambiguous source marker:** find the Dida tasks that share the displayed `SiYuan-Block-ID:` value and resolve the duplicate manually. The plugin will not choose one silently.
-- **Settings report an invalid configuration:** correct every missing, duplicate, or overlapping range and save before syncing again.
-- **Another computer does not work:** install and authorize the CLI separately on that computer. Do not copy CLI paths or authorization files between devices.
+- **Dida CLI 不可用：**先在终端执行 `dida --version`。若终端可用而思源不可用，请在设置中填写 CLI 的绝对路径后重新测试。
+- **任务快照提示 CLI 版本不受支持：**请安装 Dida CLI `0.1.14`（或仍受支持的 `0.1.10`）。其他版本的快照协议完成验证前，本插件版本会安全停止恢复和新建未绑定任务。
+- **没有滴答清单：**按 [官方说明](https://help.dida365.com/articles/7464976698707017728) 重新授权，然后刷新清单。
+- **待办没有同步：**确认它所在的笔记本和文档路径属于已配置范围，并查看同步日志。
+- **新建任务或恢复被阻止：**确认未完成和已完成任务快照均可读取，再重新同步。阻止操作是为了保护未绑定待办，避免重复创建。
+- **恢复提示来源标识有歧义：**找到包含相同 `SiYuan-Block-ID:` 值的多个滴答任务，手动处理重复项。插件不会擅自选择其中一个。
+- **设置提示配置无效：**修正所有字段缺失、重复或重叠的范围并保存，然后再同步。
+- **换电脑后无法使用：**在新电脑分别安装并授权 CLI，不要复制 CLI 路径或授权文件。
 
-## Limits
+## 限制
 
-This MVP does not delete tasks, sync due dates or reminders, sync repeating tasks, synchronize Dida title edits back to SiYuan, or synchronize tables and database blocks. The new-task date setting affects only tasks created after the setting is saved; it never changes dates on existing Dida tasks.
+当前 MVP 不会删除任务，不同步截止日期、提醒和重复任务，不会把滴答中修改的标题回写到思源，也不支持表格和数据库块。日期设置只影响保存设置后新建的任务，不会修改已有滴答任务的日期。
 
-The Dida CLI does not provide a remote idempotency primitive for task creation. Do not run simultaneous initial syncs for the same unbound SiYuan todos on multiple devices. Cross-device exactly-once creation is not guaranteed; if duplicates are created, their matching source markers become ambiguous and the plugin stops recovery safely instead of choosing a task.
+Dida CLI 没有提供任务创建的远端幂等机制。不要在多台设备上同时对同一批未绑定的思源待办执行首次同步。插件不能保证跨设备严格只创建一次；如果产生重复任务，相同的来源标识会形成歧义，插件将安全停止恢复，而不会擅自选择任务。
 
-## Development
+## 开发
 
 ```sh
 npm test
@@ -89,4 +97,4 @@ npm run build
 npm run package
 ```
 
-`npm run package` creates `package.zip` for a GitHub Release.
+`npm run package` 会生成用于 GitHub Release 的 `package.zip`。

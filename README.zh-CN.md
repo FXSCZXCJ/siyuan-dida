@@ -1,5 +1,13 @@
 # 思源滴答同步
 
+> **上游项目说明**
+>
+> 本仓库是 [Cloudquill-Z/siyuan-dida](https://github.com/Cloudquill-Z/siyuan-dida) 的 fork，主要用于验证并适配 Dida CLI `0.1.14`。原项目、主要实现和英文文档均来自上游；本 fork 默认提供中文 README，并继续兼容 Dida CLI `0.1.10`。
+>
+> - 上游仓库：<https://github.com/Cloudquill-Z/siyuan-dida>
+> - 当前 fork：<https://github.com/FXSCZXCJ/siyuan-dida>
+> - 上游发布新版本后，本 fork 可能需要先同步上游再重新验证适配。
+
 这是一个仅面向思源桌面端的插件，通过本机 `dida` CLI 同步 Markdown 待办块和滴答清单。
 
 ## 使用前提
