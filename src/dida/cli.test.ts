@@ -13,7 +13,7 @@ import {
 import { DidaCliGateway } from "./gateway";
 
 const completedOptions = (overrides: Partial<DidaCliClientOptions> = {}): DidaCliClientOptions => ({
-  cliVersion: "0.1.10",
+  cliVersion: "0.1.14",
   ...overrides
 });
 
@@ -242,7 +242,7 @@ describe("DidaCliClient", () => {
     await expect(client.listIncompleteTasks([])).resolves.toEqual([]);
   });
 
-  test.each([undefined, "", "0.1.9", "0.1.11", "toString", "constructor", "__proto__"])(
+  test.each([undefined, "", "0.1.9", "0.1.13", "toString", "constructor", "__proto__"])(
     "rejects unsupported CLI version %j before requesting incomplete tasks",
     async (cliVersion) => {
       let calls = 0;
@@ -581,26 +581,29 @@ describe("DidaCliClient", () => {
     expect(calls).toBe(2);
   });
 
-  test("accepts a normalized verified CLI version for completed snapshots", async () => {
-    let calls = 0;
-    const client = new DidaCliClient(
-      "dida",
-      async () => {
-        calls += 1;
-        return { stdout: "[]", stderr: "" };
-      },
-      completedOptions({ cliVersion: "  v0.1.10\n" })
-    );
+  test.each(["  v0.1.10\n", " v0.1.14\n"])(
+    "accepts normalized verified CLI version %j for completed snapshots",
+    async (cliVersion) => {
+      let calls = 0;
+      const client = new DidaCliClient(
+        "dida",
+        async () => {
+          calls += 1;
+          return { stdout: "[]", stderr: "" };
+        },
+        completedOptions({ cliVersion })
+      );
 
-    await expect(client.listCompletedTasks(["project-1"])).resolves.toEqual([]);
-    expect(calls).toBe(1);
-  });
+      await expect(client.listCompletedTasks(["project-1"])).resolves.toEqual([]);
+      expect(calls).toBe(1);
+    }
+  );
 
   test.each([
     undefined,
     "",
     "0.1.9",
-    "0.1.11",
+    "0.1.13",
     "toString",
     "constructor",
     "__proto__",

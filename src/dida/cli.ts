@@ -55,6 +55,10 @@ const SNAPSHOT_PROTOCOLS: ReadonlyMap<string, SnapshotProtocol> = new Map([
   ["0.1.10", {
     resultLimit: 200,
     completedUpperBoundSecond: Date.parse("9999-12-31T23:59:59Z") / 1_000
+  }],
+  ["0.1.14", {
+    resultLimit: 200,
+    completedUpperBoundSecond: Date.parse("9999-12-31T23:59:59Z") / 1_000
   }]
 ]);
 
@@ -505,7 +509,7 @@ function snapshotProtocol(
   if (!protocol) {
     const displayedVersion = cliVersion?.trim() || "missing";
     throw new Error(
-      `${snapshotName} snapshot unsupported for dida CLI version ${displayedVersion}; verified version: 0.1.10`
+      `${snapshotName} snapshot unsupported for dida CLI version ${displayedVersion}; verified versions: 0.1.10, 0.1.14`
     );
   }
   return protocol;

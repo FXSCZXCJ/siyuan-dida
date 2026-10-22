@@ -21,7 +21,7 @@ const pluginMocks = vi.hoisted(() => ({
   engineSync: vi.fn(async () => undefined),
   engineConstructor: vi.fn(),
   didaClientConstructor: vi.fn(),
-  resolveDidaCommand: vi.fn(async () => ({ command: "dida", version: "0.1.10" }))
+  resolveDidaCommand: vi.fn(async () => ({ command: "dida", version: "0.1.14" }))
 }));
 
 vi.mock("siyuan", () => ({
@@ -504,7 +504,7 @@ describe("sync status and plugin lifecycle", () => {
 
     expect(pluginMocks.didaClientConstructor).toHaveBeenCalledWith(
       "dida",
-      { cliVersion: "0.1.10" }
+      { cliVersion: "0.1.14" }
     );
     expect(transitions.at(-1)).toBe("success");
     expect(pluginMocks.panelOptions!.status.getSnapshot().latestResult?.recovered).toBe(1);
