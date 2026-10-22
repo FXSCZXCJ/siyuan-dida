@@ -17,6 +17,14 @@ export class DidaCliGateway implements DidaGateway {
     return this.client.listCompletedTasks(projectIds, startSecond);
   }
 
+  listProjects() {
+    return this.client.listProjects();
+  }
+
+  listProjectGroups() {
+    return this.client.listProjectGroups();
+  }
+
   createTask(projectId: string, title: string, options?: CreateDidaTaskOptions) {
     return this.client.createTask(projectId, title, options);
   }

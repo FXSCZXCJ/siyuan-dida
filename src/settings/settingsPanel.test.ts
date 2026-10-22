@@ -120,6 +120,7 @@ function settings(): PluginSettings {
     resolvedCliPaths: {},
     autoSync: false,
     newTaskDate: "today",
+    syncRemoteMetadata: false,
     syncIntervalSeconds: 15,
     syncOnStartup: false,
     maxTasksPerRun: 200,

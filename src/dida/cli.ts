@@ -39,6 +39,12 @@ export interface DidaTask extends DidaTaskSnapshot {
 export interface DidaProject {
   id: string;
   name: string;
+  groupId?: string;
+}
+
+export interface DidaProjectGroup {
+  id: string;
+  name: string;
 }
 
 export interface DidaCliClientOptions {
@@ -342,6 +348,12 @@ export class DidaCliClient {
   async listProjects(): Promise<DidaProject[]> {
     const result = await this.runner(this.command, ["project", "list", "--json"]);
     return parseJson<DidaProject[]>(result.stdout);
+  }
+
+  async listProjectGroups(): Promise<DidaProjectGroup[]> {
+    const result = await this.runner(this.command, ["project", "group", "list", "--json"]);
+    const groups = parseJson<DidaProjectGroup[]>(result.stdout);
+    return Array.isArray(groups) ? groups : [];
   }
 
   async listIncompleteTasks(projectIds: string[]): Promise<DidaTaskSnapshot[]> {

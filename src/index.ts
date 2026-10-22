@@ -199,6 +199,7 @@ export default class SiyuanDidaPlugin extends Plugin {
           return (await this.createBindingMaintenance()).scan({
             maxTasksPerRun: this.settings.maxTasksPerRun || DEFAULT_SETTINGS.maxTasksPerRun,
             newTaskDate: this.settings.newTaskDate,
+            syncRemoteMetadata: this.settings.syncRemoteMetadata,
             ranges: this.settings.ranges,
             completedWatermarkSecond: this.settings.completedWatermarkSecond
           });
@@ -307,6 +308,7 @@ export default class SiyuanDidaPlugin extends Plugin {
       const result = await engine.sync({
         maxTasksPerRun: this.settings.maxTasksPerRun || DEFAULT_SETTINGS.maxTasksPerRun,
         newTaskDate: this.settings.newTaskDate,
+        syncRemoteMetadata: this.settings.syncRemoteMetadata,
         ranges: this.settings.ranges,
         completedWatermarkSecond: this.settings.completedWatermarkSecond,
         dryRun: preview

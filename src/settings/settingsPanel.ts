@@ -124,6 +124,11 @@ export function buildSettingsPanel(options: SettingsPanelOptions): SettingsPanel
           </select>
         </label>
         <div class="dida-sync-muted">${t("metadataSyntaxHint")}</div>
+        <label class="dida-sync-toggle">
+          <input type="checkbox" data-field="syncRemoteMetadata" />
+          <span>${t("syncRemoteMetadata")}</span>
+        </label>
+        <div class="dida-sync-muted">${t("syncRemoteMetadataHint")}</div>
       </section>
     </div>
 
@@ -184,6 +189,7 @@ export function buildSettingsPanel(options: SettingsPanelOptions): SettingsPanel
   const autoSync = root.querySelector<HTMLInputElement>('[data-field="autoSync"]')!;
   const syncIntervalSeconds = root.querySelector<HTMLInputElement>('[data-field="syncIntervalSeconds"]')!;
   const newTaskDate = root.querySelector<HTMLSelectElement>('[data-field="newTaskDate"]')!;
+  const syncRemoteMetadata = root.querySelector<HTMLInputElement>('[data-field="syncRemoteMetadata"]')!;
   const rangesEl = root.querySelector<HTMLElement>('[data-field="ranges"]')!;
   const logs = root.querySelector<HTMLElement>('[data-field="logs"]')!;
   const watermarkEl = root.querySelector<HTMLElement>('[data-field="completedWatermark"]')!;
@@ -198,6 +204,7 @@ export function buildSettingsPanel(options: SettingsPanelOptions): SettingsPanel
   autoSync.checked = options.settings.autoSync;
   syncIntervalSeconds.value = String(options.settings.syncIntervalSeconds);
   newTaskDate.value = options.settings.newTaskDate;
+  syncRemoteMetadata.checked = options.settings.syncRemoteMetadata;
   logs.textContent = formatSyncLogs(options.settings.logs.slice(0, 10), t);
   const renderWatermark = () => {
     const watermark = options.settings.completedWatermarkSecond;
@@ -293,6 +300,7 @@ export function buildSettingsPanel(options: SettingsPanelOptions): SettingsPanel
     autoSync.checked = savedSettings.autoSync;
     syncIntervalSeconds.value = String(savedSettings.syncIntervalSeconds);
     newTaskDate.value = savedSettings.newTaskDate;
+    syncRemoteMetadata.checked = savedSettings.syncRemoteMetadata;
     renderWatermark();
     renderRanges();
   };
@@ -452,6 +460,7 @@ export function buildSettingsPanel(options: SettingsPanelOptions): SettingsPanel
         cliCommand: cliCommand.value || "dida",
         autoSync: autoSync.checked,
         newTaskDate: newTaskDate.value === "none" ? "none" : "today",
+        syncRemoteMetadata: syncRemoteMetadata.checked,
         syncIntervalSeconds: Number(syncIntervalSeconds.value || 15),
         ranges
       }));

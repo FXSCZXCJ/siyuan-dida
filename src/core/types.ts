@@ -15,6 +15,8 @@ export interface SyncSettings {
   ranges: SyncRange[];
   /** When true, all write operations are skipped and counters describe planned work. */
   dryRun?: boolean;
+  /** When true, Dida metadata is written back to bound SiYuan todos. */
+  syncRemoteMetadata?: boolean;
   /**
    * Epoch-second lower bound for the completed-tasks pull. When present, the
    * engine runs an incremental snapshot from this watermark instead of a full
@@ -96,6 +98,7 @@ export interface SiYuanGateway {
   getBlockAttrs(blockId: string): Promise<Record<string, string>>;
   setBlockAttrs(blockId: string, attrs: Record<string, string>): Promise<void>;
   markBlockCompleted(blockId: string): Promise<void>;
+  updateBlockMarkdown(blockId: string, markdown: string): Promise<void>;
 }
 
 export interface CreateDidaTaskOptions {
@@ -119,11 +122,19 @@ export interface DidaTaskSnapshot {
   projectId: string;
   title?: string;
   content?: string;
+  dueDate?: string;
+  isAllDay?: boolean;
+  priority?: number;
+  tags?: string[];
+  columnId?: string;
+  columnName?: string;
 }
 
 export interface DidaGateway {
   listIncompleteTasks(projectIds: string[]): Promise<DidaTaskSnapshot[]>;
   listCompletedTasks(projectIds: string[], startSecond?: number): Promise<DidaTaskSnapshot[]>;
+  listProjects?(): Promise<Array<{ id: string; name: string; groupId?: string }>>;
+  listProjectGroups?(): Promise<Array<{ id: string; name: string }>>;
   createTask(projectId: string, title: string, options?: CreateDidaTaskOptions): Promise<{ id: string; projectId: string }>;
   getTask(projectId: string, taskId: string): Promise<DidaTaskSnapshot & { status?: number } | null>;
   updateTaskTitle(projectId: string, taskId: string, title: string): Promise<void>;

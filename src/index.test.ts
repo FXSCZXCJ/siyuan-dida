@@ -112,6 +112,7 @@ function loadedSettings(kind: "duplicate" | "overlap"): PluginSettings {
     resolvedCliPaths: {},
     autoSync: true,
     newTaskDate: "today",
+    syncRemoteMetadata: false,
     syncIntervalSeconds: 15,
     syncOnStartup: true,
     maxTasksPerRun: 200,

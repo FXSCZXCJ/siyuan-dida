@@ -3,6 +3,8 @@ import {
   markTodoCompleted,
   parseTodoMarkdown,
   parseTodoMetadata,
+  renderTodoMetadata,
+  replaceTodoTitleMetadata,
   todoMetadataKey
 } from "./todoParser";
 
@@ -86,5 +88,20 @@ describe("parseTodoMetadata", () => {
 
     expect(result.title).toBe("错误日期 @due(2026-02-30)");
     expect(todoMetadataKey(result.metadata)).toBe("");
+  });
+});
+
+describe("renderTodoMetadata", () => {
+  test("renders metadata markers and replaces the visible todo title", () => {
+    const metadata = {
+      dueDate: "2026-11-02T00:00:00+0800",
+      allDay: true,
+      priority: 3 as const,
+      tags: ["work"]
+    };
+    expect(renderTodoMetadata(metadata)).toBe("@due(2026-11-02) !p3 @tag(work)");
+    expect(replaceTodoTitleMetadata("- [ ] 发布版本 !p5", "发布版本", metadata)).toBe(
+      "- [ ] 发布版本 @due(2026-11-02) !p3 @tag(work)"
+    );
   });
 });

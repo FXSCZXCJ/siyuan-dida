@@ -80,6 +80,11 @@ class FakeSiYuan implements SiYuanGateway {
   async markBlockCompleted(blockId: string) {
     this.completed.push(blockId);
   }
+
+  async updateBlockMarkdown(blockId: string, markdown: string) {
+    const existing = this.blocks.find((candidate) => candidate.id === blockId);
+    if (existing) existing.markdown = markdown;
+  }
 }
 
 class FakeDida implements DidaGateway {
@@ -103,6 +108,10 @@ class FakeDida implements DidaGateway {
   public createTaskError: Error | null = null;
   public createSideEffect: ((task: DidaTaskSnapshot) => void) | null = null;
 
+  constructor(tasks: DidaTaskSnapshot[] = []) {
+    this.incompleteTasks = [...tasks];
+  }
+
   async listIncompleteTasks(projectIds: string[]) {
     this.incompleteTaskCalls.push([...projectIds]);
     if (this.incompleteTaskError) {
@@ -121,6 +130,14 @@ class FakeDida implements DidaGateway {
       return [...this.completedTaskSnapshots];
     }
     return Array.from(this.completedTasks, (id) => ({ id, projectId: "project-1" }));
+  }
+
+  async listProjects() {
+    return [{ id: "project-1", name: "Work list", groupId: "group-1" }];
+  }
+
+  async listProjectGroups() {
+    return [{ id: "group-1", name: "Work group" }];
   }
 
   async createTask(projectId: string, title: string, options?: CreateDidaTaskOptions) {
@@ -337,6 +354,82 @@ describe("SyncEngine", () => {
       }
     }]);
     expect(siyuan.attrs[0].attrs["custom-dida-last-metadata"]).toBe("");
+  });
+
+  test("writes Dida due date, priority, tags, details, list, group, and column back to SiYuan", async () => {
+    const siyuan = new FakeSiYuan([
+      block({
+        markdown: "- [ ] 发布版本",
+        attrs: {
+          "custom-dida-task-id": "task-1",
+          "custom-dida-project-id": "project-1",
+          "custom-dida-last-hash": taskHash("发布版本", false),
+          "custom-dida-last-metadata": ""
+        }
+      })
+    ]);
+    const dida = new FakeDida([{
+      id: "task-1",
+      projectId: "project-1",
+      title: "发布版本",
+      content: "详细说明\nSiYuan-Block-ID: block-1",
+      dueDate: "2026-11-02T18:30:00+0800",
+      isAllDay: false,
+      priority: 5,
+      tags: ["work", "release"],
+      columnId: "column-1",
+      columnName: "Doing"
+    }]);
+
+    const result = await new SyncEngine(siyuan, dida).sync({
+      ...settings(),
+      syncRemoteMetadata: true
+    });
+
+    expect(result.writtenBack).toBe(1);
+    expect(siyuan.blocks[0].markdown).toBe(
+      "- [ ] 发布版本 @due(2026-11-02 18:30) !p5 @tag(work,release)"
+    );
+    expect(siyuan.attrs[0].attrs).toMatchObject({
+      "custom-dida-detail": "详细说明",
+      "custom-dida-project-name": "Work list",
+      "custom-dida-project-group": "Work group",
+      "custom-dida-column": "Doing",
+      "custom-dida-due": "2026-11-02T18:30:00+0800",
+      "custom-dida-priority": "5",
+      "custom-dida-tags": "work,release"
+    });
+  });
+
+  test("does not overwrite metadata edited locally while a remote task exists", async () => {
+    const localMetadata = JSON.stringify({ priority: 3 });
+    const siyuan = new FakeSiYuan([
+      block({
+        markdown: "- [ ] 发布版本 !p3",
+        attrs: {
+          "custom-dida-task-id": "task-1",
+          "custom-dida-project-id": "project-1",
+          "custom-dida-last-hash": taskHash("发布版本", false),
+          "custom-dida-last-metadata": ""
+        }
+      })
+    ]);
+    const dida = new FakeDida([{
+      id: "task-1",
+      projectId: "project-1",
+      title: "发布版本",
+      content: "SiYuan-Block-ID: block-1",
+      priority: 5
+    }]);
+
+    await new SyncEngine(siyuan, dida).sync({
+      ...settings(),
+      syncRemoteMetadata: true
+    });
+
+    expect(siyuan.blocks[0].markdown).toBe("- [ ] 发布版本 !p3");
+    expect(dida.metadataUpdates[0].options.priority).toBe(3);
+    expect(siyuan.attrs[0].attrs["custom-dida-last-metadata"]).toBe(localMetadata);
   });
 
   test("creates new child todos under their newly created Dida parent task", async () => {

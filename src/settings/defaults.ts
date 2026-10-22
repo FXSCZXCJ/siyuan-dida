@@ -12,6 +12,7 @@ export interface PluginSettings {
   resolvedCliPaths: Record<string, string>;
   autoSync: boolean;
   newTaskDate: NewTaskDate;
+  syncRemoteMetadata: boolean;
   syncIntervalSeconds: number;
   syncOnStartup: boolean;
   maxTasksPerRun: number;
@@ -27,6 +28,7 @@ export interface StoredPluginSettings {
   cliCommand: string;
   autoSync: boolean;
   newTaskDate: NewTaskDate;
+  syncRemoteMetadata: boolean;
   syncIntervalSeconds: number;
   syncOnStartup: boolean;
   maxTasksPerRun: number;
@@ -46,6 +48,7 @@ export const DEFAULT_SETTINGS: PluginSettings = {
   resolvedCliPaths: {},
   autoSync: false,
   newTaskDate: "today",
+  syncRemoteMetadata: true,
   syncIntervalSeconds: 15,
   syncOnStartup: false,
   maxTasksPerRun: 200,
@@ -58,6 +61,7 @@ export function normalizeSettings(value: Partial<PluginSettings> | null | undefi
     ...DEFAULT_SETTINGS,
     ...value,
     newTaskDate: value?.newTaskDate === "none" ? "none" : "today",
+    syncRemoteMetadata: value?.syncRemoteMetadata !== false,
     resolvedCliPaths: value?.resolvedCliPaths ?? {},
     ranges: value?.ranges ?? [],
     logs: value?.logs ?? []
@@ -131,6 +135,7 @@ export function splitSettingsForStorage(settings: PluginSettings): {
       cliCommand: settings.cliCommand,
       autoSync: settings.autoSync,
       newTaskDate: settings.newTaskDate,
+      syncRemoteMetadata: settings.syncRemoteMetadata,
       syncIntervalSeconds: settings.syncIntervalSeconds,
       syncOnStartup: settings.syncOnStartup,
       maxTasksPerRun: settings.maxTasksPerRun,

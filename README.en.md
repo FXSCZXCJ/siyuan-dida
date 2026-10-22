@@ -66,6 +66,20 @@ Example: `- [ ] Release @due(2026-11-02 18:30) !p5 @tag(work,release)`.
 
 An explicit due date overrides the default new-task date. The plugin updates metadata only when it changes and clears fields it previously managed when their markers are removed; it does not overwrite unrelated fields that the plugin never managed.
 
+## Dida metadata write-back
+
+**Write Dida metadata back to SiYuan** is enabled by default. For bound tasks it syncs:
+
+- Due date and all-day state into the `@due(...)` title marker.
+- Priority into `!p1`, `!p3`, or `!p5`.
+- Tags into `@tag(...)`.
+- Details into the `custom-dida-detail` block attribute.
+- List and list-group names into `custom-dida-project-name` and `custom-dida-project-group`.
+- Kanban column into `custom-dida-column`.
+- Raw due date, priority, and tags into `custom-dida-due`, `custom-dida-priority`, and `custom-dida-tags`.
+
+Conflicts use last-writer-wins: a metadata change just made in the SiYuan title is uploaded first; otherwise the Dida value is written back. Disabling this setting leaves only the SiYuan-to-Dida direction.
+
 ## Automatic sync
 
 Enable **Automatic sync** in plugin settings and select an interval of at least five seconds. Only one sync runs at a time on the current device; an overlapping trigger is skipped.
@@ -110,7 +124,7 @@ Data storage is unchanged in version 1.1.13. Stable plugin settings are stored u
 
 ## Limits
 
-Automatic sync never deletes tasks; only the manual actions under **Binding maintenance** can delete a Dida task. The plugin does not sync reminders, sync repeating tasks, synchronize Dida title edits back to SiYuan, or synchronize tables and database blocks. The new-task date setting affects only tasks created after the setting is saved unless an explicit `@due(...)` marker overrides it; text metadata changes update existing tasks on the next sync.
+Automatic sync never deletes tasks; only the manual actions under **Binding maintenance** can delete a Dida task. The plugin does not sync reminders, sync repeating tasks, or synchronize tables and database blocks. Dida task titles themselves are not written back; only metadata markers and detail/list/group/column attributes are.
 
 The Dida CLI does not provide a remote idempotency primitive for task creation. Do not run simultaneous initial syncs for the same unbound SiYuan todos on multiple devices. Cross-device exactly-once creation is not guaranteed; if duplicates are created, their matching source markers become ambiguous and the plugin stops recovery safely instead of choosing a task.
 

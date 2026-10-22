@@ -74,6 +74,33 @@ export function parseTodoMetadata(title: string): TodoWithMetadata {
   };
 }
 
+export function renderTodoMetadata(metadata: TodoMetadata): string {
+  const parts: string[] = [];
+  if (metadata.dueDate) {
+    const match = metadata.dueDate.match(/^(\d{4}-\d{2}-\d{2})T(\d{2}:\d{2})/);
+    if (match) {
+      parts.push(metadata.allDay ? `@due(${match[1]})` : `@due(${match[1]} ${match[2]})`);
+    }
+  }
+  if (metadata.priority === 1 || metadata.priority === 3 || metadata.priority === 5) {
+    parts.push(`!p${metadata.priority}`);
+  }
+  if (metadata.tags && metadata.tags.length > 0) {
+    parts.push(`@tag(${metadata.tags.join(",")})`);
+  }
+  return parts.join(" ");
+}
+
+export function replaceTodoTitleMetadata(markdown: string, visibleTitle: string, metadata: TodoMetadata): string {
+  const lines = markdown.split(/\r?\n/);
+  const firstLine = lines[0] ?? "";
+  const suffix = renderTodoMetadata(metadata);
+  const title = `${visibleTitle}${suffix ? ` ${suffix}` : ""}`;
+  if (!TODO_PATTERN.test(firstLine)) return markdown;
+  lines[0] = firstLine.replace(TODO_PATTERN, `$1[$2] ${title}`);
+  return lines.join("\n");
+}
+
 export function todoMetadataKey(metadata: TodoMetadata): string {
   if (
     metadata.dueDate === undefined

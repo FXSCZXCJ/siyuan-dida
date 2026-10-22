@@ -85,6 +85,14 @@ export class SiYuanRepository implements SiYuanGateway {
     });
   }
 
+  async updateBlockMarkdown(blockId: string, markdown: string): Promise<void> {
+    await kernelApi<unknown>("/api/block/updateBlock", {
+      id: blockId,
+      dataType: "markdown",
+      data: markdown
+    });
+  }
+
   async getBlockAttrs(blockId: string): Promise<Record<string, string>> {
     return kernelApi<Record<string, string>>("/api/attr/getBlockAttrs", { id: blockId });
   }

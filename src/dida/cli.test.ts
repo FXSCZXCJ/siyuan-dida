@@ -437,6 +437,18 @@ describe("DidaCliClient", () => {
     await expect(client.deleteTask("project-1", "task-1")).resolves.toBeUndefined();
   });
 
+  test("lists Dida project groups", async () => {
+    const client = new DidaCliClient("dida", async (_command, args) => {
+      expect(args).toEqual(["project", "group", "list", "--json"]);
+      return {
+        stdout: JSON.stringify([{ id: "group-1", name: "Work" }]),
+        stderr: ""
+      };
+    });
+
+    await expect(client.listProjectGroups()).resolves.toEqual([{ id: "group-1", name: "Work" }]);
+  });
+
   test("sets a task parent with the update command", async () => {
     const client = new DidaCliClient("dida", async (command, args) => {
       expect(command).toBe("dida");

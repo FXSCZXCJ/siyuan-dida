@@ -1,10 +1,16 @@
 import { localAllDayStart } from "./date";
 import { createTranslator, type Translate } from "../i18n";
 import { taskHash } from "./hash";
-import { buildTaskSourceContent, isSiYuanBlockId, parseSourceBlockId } from "./sourceMarker";
+import {
+  buildTaskSourceContent,
+  isSiYuanBlockId,
+  parseSourceBlockId,
+  SOURCE_MARKER_PREFIX
+} from "./sourceMarker";
 import {
   parseTodoMarkdown,
   parseTodoMetadata,
+  replaceTodoTitleMetadata,
   todoMetadataKey,
   type TodoMetadata
 } from "./todoParser";
@@ -27,6 +33,13 @@ const PROJECT_ID_ATTR = "custom-dida-project-id";
 const LAST_SYNC_ATTR = "custom-dida-last-sync";
 const LAST_HASH_ATTR = "custom-dida-last-hash";
 const LAST_METADATA_ATTR = "custom-dida-last-metadata";
+const REMOTE_DETAIL_ATTR = "custom-dida-detail";
+const REMOTE_PROJECT_NAME_ATTR = "custom-dida-project-name";
+const REMOTE_PROJECT_GROUP_ATTR = "custom-dida-project-group";
+const REMOTE_COLUMN_ATTR = "custom-dida-column";
+const REMOTE_DUE_ATTR = "custom-dida-due";
+const REMOTE_PRIORITY_ATTR = "custom-dida-priority";
+const REMOTE_TAGS_ATTR = "custom-dida-tags";
 const SYNC_STATE_ATTR = "custom-dida-sync-state";
 const SYNC_STATE_SYNCED = "synced";
 const SYNC_STATE_COMPLETED_SYNCED = "completed-synced";
@@ -44,6 +57,7 @@ interface RangeSyncContext {
 interface RecoveryContext {
   tasksBySourceBlockId: Map<string, DidaTaskSnapshot[]>;
   indexedTasksByKey: Map<string, DidaTaskSnapshot>;
+  remoteTasksByKey: Map<string, DidaTaskSnapshot>;
   creationAttemptedBlockIds: Set<string>;
   snapshotComplete: boolean;
 }
@@ -104,6 +118,58 @@ function storedMetadata(raw: string | undefined): TodoMetadata {
   } catch {
     return {};
   }
+}
+
+function applyRemoteMetadata(local: TodoMetadata, task: DidaTaskSnapshot): TodoMetadata {
+  const metadata: TodoMetadata = { ...local };
+  if (Object.prototype.hasOwnProperty.call(task, "dueDate")) {
+    if (typeof task.dueDate === "string" && task.dueDate.trim()) {
+      metadata.dueDate = task.dueDate;
+      metadata.allDay = task.isAllDay === true;
+    } else {
+      delete metadata.dueDate;
+      delete metadata.allDay;
+    }
+  }
+  if (Object.prototype.hasOwnProperty.call(task, "priority")) {
+    if (task.priority === 1 || task.priority === 3 || task.priority === 5) {
+      metadata.priority = task.priority;
+    } else {
+      delete metadata.priority;
+    }
+  }
+  if (Object.prototype.hasOwnProperty.call(task, "tags")) {
+    if (task.tags && task.tags.length > 0) {
+      metadata.tags = [...task.tags];
+    } else {
+      delete metadata.tags;
+    }
+  }
+  return metadata;
+}
+
+function remoteDetail(task: DidaTaskSnapshot): string {
+  return (task.content ?? "")
+    .split(/\r?\n/)
+    .filter((line) => !line.trimStart().startsWith(SOURCE_MARKER_PREFIX))
+    .join("\n")
+    .trim();
+}
+
+function metadataAttributes(
+  task: DidaTaskSnapshot,
+  projectName: string | undefined,
+  projectGroup: string | undefined
+): Record<string, string> {
+  return {
+    [REMOTE_DETAIL_ATTR]: remoteDetail(task),
+    [REMOTE_PROJECT_NAME_ATTR]: projectName ?? "",
+    [REMOTE_PROJECT_GROUP_ATTR]: projectGroup ?? "",
+    [REMOTE_COLUMN_ATTR]: task.columnName ?? task.columnId ?? "",
+    [REMOTE_DUE_ATTR]: task.dueDate ?? "",
+    [REMOTE_PRIORITY_ATTR]: task.priority === undefined ? "" : String(task.priority),
+    [REMOTE_TAGS_ATTR]: (task.tags ?? []).join(",")
+  };
 }
 
 function metadataUpdateOptions(
@@ -167,13 +233,32 @@ export class SyncEngine {
     const recoveryContext: RecoveryContext = {
       tasksBySourceBlockId: new Map(),
       indexedTasksByKey: new Map(),
+      remoteTasksByKey: new Map(),
       creationAttemptedBlockIds: new Set(),
       snapshotComplete: true
     };
+    const projectNames = new Map<string, string>();
+    const projectGroups = new Map<string, string>();
+    if (settings.syncRemoteMetadata !== false) {
+      try {
+        const projects = await this.dida.listProjects?.() ?? [];
+        projects.forEach((project) => projectNames.set(project.id, project.name));
+        const groups = await this.dida.listProjectGroups?.() ?? [];
+        const groupNames = new Map(groups.map((group) => [group.id, group.name]));
+        projects.forEach((project) => {
+          if (project.groupId && groupNames.has(project.groupId)) {
+            projectGroups.set(project.id, groupNames.get(project.groupId)!);
+          }
+        });
+      } catch (error) {
+        addEvent(result, "debug", this.t("remoteMetadataUnavailable", { message: (error as Error).message }));
+      }
+    }
     try {
       const incompleteTasks = await this.dida.listIncompleteTasks(projectIds);
       for (const task of incompleteTasks) {
         indexTaskBySourceBlockId(recoveryContext, task);
+        recoveryContext.remoteTasksByKey.set(remoteTaskKey(task), task);
       }
       addEvent(result, "debug", this.t("incompleteTasksLoaded", { count: incompleteTasks.length }));
     } catch (error) {
@@ -201,6 +286,7 @@ export class SyncEngine {
       completedTaskKeys = new Set(completedTasks.map(remoteTaskKey));
       for (const task of completedTasks) {
         indexTaskBySourceBlockId(recoveryContext, task);
+        recoveryContext.remoteTasksByKey.set(remoteTaskKey(task), task);
       }
       // Advance the watermark to when this pull started so tasks completed
       // mid-pull are re-included next run (idempotent; already-synced blocks
@@ -284,7 +370,10 @@ export class SyncEngine {
           context,
           recoveryContext,
           settings.newTaskDate ?? "today",
-          dryRun
+          dryRun,
+          settings.syncRemoteMetadata !== false,
+          projectNames,
+          projectGroups
         );
       }
       addEvent(
@@ -322,7 +411,10 @@ export class SyncEngine {
     context: RangeSyncContext,
     recoveryContext: RecoveryContext,
     newTaskDate: "today" | "none",
-    dryRun: boolean
+    dryRun: boolean,
+    syncRemoteMetadata: boolean,
+    projectNames: ReadonlyMap<string, string>,
+    projectGroups: ReadonlyMap<string, string>
   ) {
     try {
       const parsed = parseTodoMarkdown(block.markdown);
@@ -520,7 +612,23 @@ export class SyncEngine {
         }
         await this.writeIfLive(
           dryRun,
-          () => this.siyuan.setBlockAttrs(block.id, attrsFor(created.id, created.projectId, currentHash, SYNC_STATE_SYNCED, metadataKey))
+          () => this.siyuan.setBlockAttrs(block.id, {
+            ...attrsFor(created.id, created.projectId, currentHash, SYNC_STATE_SYNCED, metadataKey),
+            ...metadataAttributes(
+              {
+                id: created.id,
+                projectId: created.projectId,
+                title: taskTitle,
+                content: sourceContent,
+                dueDate: metadata.dueDate,
+                isAllDay: metadata.allDay,
+                priority: metadata.priority,
+                tags: metadata.tags
+              },
+              projectNames.get(created.projectId),
+              projectGroups.get(created.projectId)
+            )
+          })
         );
         context.knownBindings.set(block.id, { taskId: created.id, projectId: created.projectId });
         return;
@@ -541,6 +649,47 @@ export class SyncEngine {
         rangeResult.writtenBack += 1;
         addEvent(result, "info", this.t("didaCompletionWrittenBack", { title: taskTitle }), { blockId: block.id, rangeId: rangeResult.rangeId });
         return;
+      }
+
+      const remoteTask = recoveryContext.remoteTasksByKey.get(
+        remoteTaskKey({ id: existing.taskId, projectId: existing.projectId })
+      );
+      const localMetadataChanged = block.attrs[LAST_METADATA_ATTR] !== metadataKey;
+      if (syncRemoteMetadata && remoteTask && !localMetadataChanged && !parsed.checked) {
+        const incomingMetadata = applyRemoteMetadata(metadata, remoteTask);
+        const incomingKey = todoMetadataKey(incomingMetadata);
+        const incomingAttrs = metadataAttributes(
+          remoteTask,
+          projectNames.get(remoteTask.projectId),
+          projectGroups.get(remoteTask.projectId)
+        );
+        const attrsChanged = Object.entries(incomingAttrs)
+          .some(([key, value]) => (block.attrs[key] ?? "") !== value);
+        if (incomingKey !== metadataKey || attrsChanged) {
+          const incomingMarkdown = replaceTodoTitleMetadata(block.markdown, taskTitle, incomingMetadata);
+          await this.writeIfLive(dryRun, async () => {
+            if (incomingMarkdown !== block.markdown) {
+              await this.siyuan.updateBlockMarkdown(block.id, incomingMarkdown);
+            }
+            await this.siyuan.setBlockAttrs(block.id, {
+              ...attrsFor(
+                existing.taskId,
+                existing.projectId,
+                taskHash(taskTitle, parsed.checked, incomingKey),
+                SYNC_STATE_SYNCED,
+                incomingKey
+              ),
+              ...incomingAttrs
+            });
+          });
+          result.writtenBack += 1;
+          rangeResult.writtenBack += 1;
+          addEvent(result, "info", this.t("remoteMetadataWrittenBack", { title: taskTitle }), {
+            blockId: block.id,
+            rangeId: rangeResult.rangeId
+          });
+          return;
+        }
       }
 
       if (block.attrs[LAST_HASH_ATTR] === currentHash) {

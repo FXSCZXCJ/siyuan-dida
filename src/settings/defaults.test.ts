@@ -82,6 +82,11 @@ describe("settingsForSave", () => {
     expect(settings.newTaskDate).toBe("today");
   });
 
+  test("enables Dida metadata write-back by default and honours an explicit disable", () => {
+    expect(normalizeSettings({ ...DEFAULT_SETTINGS, syncRemoteMetadata: undefined }).syncRemoteMetadata).toBe(true);
+    expect(normalizeSettings({ ...DEFAULT_SETTINGS, syncRemoteMetadata: false }).syncRemoteMetadata).toBe(false);
+  });
+
   test("keeps a resolved CLI path when the configured command is unchanged", () => {
     const current = normalizeSettings({
       ...DEFAULT_SETTINGS,
